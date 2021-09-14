@@ -1,0 +1,25 @@
+# General Ignores + IDE
+.DS_Store
+settings.xml
+WEB-INF
+.vscode/
+.env
+\.idea/
+Thumbs.db
+
+# logs + tests + temp
+logs/**
+tests/results/**
+temp/**
+
+# NPM, Bower, ETC
+**/node_modules/*
+**/bower_components/*
+npm-debug.log
+yarn-error.log
+
+## Ignored Dependencies
+coldbox/*
+testbox/*
+modules/*
+modules/**/apidocs/**
