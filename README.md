@@ -88,3 +88,4 @@ Sometimes the first load of an app will throw an error stating that `remember` c
  - Ability to customize the table name based on config.
  - Learn how to implement building/versioning like other Coldbox modules.
  - Utilize some interceptor methods for custom behavior.
+ - Add some type of database cleanup operation to purge old records

@@ -115,7 +115,7 @@ component
             cookieExists() && 
             isValidToken( getCookie() )    
         ) {
-            expireToken( cookie.rememberMe );
+            expireToken( getCookie() );
         }
         
         cfcookie(
