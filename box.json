@@ -1,0 +1,29 @@
+{
+    "author":"Dave Levin",
+    "dependencies":{},
+    "description":"RememberMe is a Coldbox Module that helps 'remember logged in users so that they will be automatically logged in again on subsequent visits.",
+    "devDependencies":{},
+    "ignore":[
+        "**/.*",
+        "/test/",
+        "/tests/"
+    ],
+    "license":[
+        {
+            "type":"MIT",
+            "URL":"https://github.com/homestar9/rememberMe/blob/master/LICENSE.md"
+        }
+    ],
+    "location":"ForgeboxStorage",
+    "name":"rememberMe",
+    "private":false,
+    "repository":{
+        "type":"git",
+        "URL":"https://github.com/homestar9/rememberMe"
+    },
+    "scripts":{},
+    "shortDescription":"Add 'remember me' functionality to your app authentication",
+    "slug":"rememberMe",
+    "type":"modules",
+    "version":"1.0.0"
+}
