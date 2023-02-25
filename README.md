@@ -1,5 +1,7 @@
 # RememberMe
 
+![RememberMe icon](https://github.com/homestar9/rememberMe/blob/master/rememberMe.svg?raw=true)
+
 RememberMe is a Coldbox module designed to work in conjunction with your authentication system to "remember" and automatically log in users on subsequent website visits.  
 
 ## Requirements
@@ -25,7 +27,7 @@ rememberMe = {
     days = 30
 }
 ```
-You will need to specify a `userServiceClass` that implements the method `getById()`.  You will also need to generate a unique encryption key that will be used when generating tokens.  Hint: You can generate a valid random key by executing the following code `generateSecretKey("AES", 256)`.
+You will need to specify a `userServiceClass` that implements the method `retrieveUserById()`.  You will also need to generate a unique encryption key that will be used when generating tokens.  Hint: You can generate a valid random key by executing the following code `generateSecretKey("AES", 256)`.
 
 Make sure your CFML datasource has a database table with the following columns (currently tested with MSSQL Server):
 | column name     | type      |
@@ -43,7 +45,7 @@ Make sure your CFML datasource has a database table with the following columns (
 
 ## Usage
 
-RememberMe automatically injects a `remember()` helper into all Coldbox interceptors.  Here's an example of how you might utilize RememberMe on the `onSessionStart()` interceptor method on an app that uses cbauth for their authentication provider:
+RememberMe automatically injects a `remember()` helper into all Coldbox interceptors.  Here's an example of how you might utilize RememberMe on the Coldbox `preProcess()` interceptor method on an app that uses cbauth for their authentication provider:
 
 ```
 /**
@@ -78,7 +80,7 @@ function sessionStart( sessionStruct ) {
 
 ## Known Issues
 
-Sometimes the first load of an app will throw an error stating that `remember` cannot be found.  I believe this has to do with a "chicken and egg" problem where sometimes every Coldbox dependency is loaded when the first `onSessionStart()` method executes.  I am open to suggestions for how to work around this.
+Sometimes the first load of an app will throw an error stating that `remember` cannot be found.  I believe this has to do with a "chicken and egg" problem where sometimes every Coldbox dependency is loaded when the first `onSessionStart()` method executes.  I recommend using `preProcess()` instead of `onSessionStart()` to avoid this issue.
 
 ## Future Development Roadmap
 

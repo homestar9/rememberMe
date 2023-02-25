@@ -5,5 +5,5 @@ interface {
 	 *
 	 * @id The unique identifier
 	 */
-	function getById( required id );
+	function retrieveUserById( required id );
 }

@@ -57,7 +57,7 @@ component
             } )
         ;
 
-        return getUserService().getById( rememberMe.userId );
+        return getUserService().retrieveUserById( rememberMe.userId );
 
     }
 
