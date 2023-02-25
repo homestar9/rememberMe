@@ -48,13 +48,8 @@ Make sure your CFML datasource has a database table with the following columns (
 RememberMe automatically injects a `remember()` helper into all Coldbox interceptors.  Here's an example of how you might utilize RememberMe on the Coldbox `preProcess()` interceptor method on an app that uses cbauth for their authentication provider:
 
 ```
-/**
-* SessionStart
-* Triggers when a new session begins
-*
-* @sessionStruct 
-*/
-function sessionStart( sessionStruct ) {
+
+function preProcess( event, interceptData, buffer, rc, prc ) {
     
     // Use the helper method to see if the right cookie exists in the browser
     if ( remember().cookieExists() ) {
@@ -80,7 +75,7 @@ function sessionStart( sessionStruct ) {
 
 ## Known Issues
 
-Sometimes the first load of an app will throw an error stating that `remember` cannot be found.  I believe this has to do with a "chicken and egg" problem where sometimes every Coldbox dependency is loaded when the first `onSessionStart()` method executes.  I recommend using `preProcess()` instead of `onSessionStart()` to avoid this issue.
+Sometimes the first load of an app will throw an error stating that `remember` cannot be found.  I believe this has to do with a "chicken and egg" problem where sometimes every Coldbox dependency is loaded when the first `onSessionStart()` method executes.  I recommend using `preProcess()` instead of `onSessionStart()` to avoid this issue for now.
 
 ## Future Development Roadmap
 
