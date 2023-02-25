@@ -1,0 +1,66 @@
+{
+    "name":"Remember Me",
+    "version":"1.0.0",
+    "author":"Angry Sam Productions, Inc.",
+    "location":"ForgeboxStorage",
+    "homepage":"https://github.com/homestar9/rememberMe",
+    "documentation":"https://github.com/homestar9/rememberMe",
+    "repository":{
+        "type":"git",
+        "URL":"https://github.com/homestar9/rememberMe"
+    },
+    "bugs":"https://github.com/homestar9/rememberMe/issues",
+    "slug":"rememberMe",
+    "shortDescription":"Remember users between sessions. Works great with cbAuth",
+    "description":"A Coldbox module to help remember users between sessions. It works great when used in conjunction with cbAuth or cbSecurity",
+    "instructions":"https://github.com/homestar9/rememberMe/README.md",
+    "changelog":"https://github.com/homestar9/rememberMe/changelog.md",
+    "type":"modules",
+    "keywords":[],
+    "private":false,
+    "projectURL":"https://github.com/homestar9/rememberMe",
+    "license":[
+        {
+            "type":"MIT",
+            "URL":"https://github.com/homestar9/rememberMe/blob/master/LICENSE.md"
+        }
+    ],
+    "contributors":[],
+    "dependencies":{},
+    "devDependencies":{
+        "testbox":"^4.5.0+5"
+    },
+    "installPaths":{
+        "testbox":"testbox/"
+    },
+    "scripts":{},
+    "ignore":[
+        "**/.*",
+        "/test/",
+        "/tests/"
+    ],
+    "testbox":{
+        "bundles":"",
+        "directory":"tests.specs",
+        "excludes":"",
+        "labels":"",
+        "options":{},
+        "recurse":true,
+        "reporter":"",
+        "runner":[
+            {
+                "default":""
+            }
+        ],
+        "testBundles":"",
+        "testSpecs":"",
+        "testSuites":"",
+        "verbose":true,
+        "watchDelay":500,
+        "watchPaths":"**.cfc"
+    },
+    "reinitWatchDirectory":"",
+    "reinitWatchDelay":500,
+    "reinitWatchPaths":"",
+    "readme":"https://github.com/homestar9/rememberMe/README.md"
+}
