@@ -51,8 +51,11 @@ RememberMe automatically injects a `remember()` helper into all Coldbox intercep
 
 function preProcess( event, interceptData, buffer, rc, prc ) {
     
-    // Use the helper method to see if the right cookie exists in the browser
-    if ( remember().cookieExists() ) {
+    // if the user is not logged in, and the rememberMe cookie exists, attempt to recall the user
+    if ( 
+        !auth().isLoggedIn() && // <-- cbAuth method
+        remember().cookieExists() 
+    ) {
         
         try {
             
@@ -62,7 +65,7 @@ function preProcess( event, interceptData, buffer, rc, prc ) {
 
             // verify the user exists and log them in using cbauth
             if ( user.isLoaded() ) {
-                auth().login( user );
+                auth().login( user ); // <-- cbAuth method
             }
 
         // if the token is invalid, forget the user and cleanup bad cookies
