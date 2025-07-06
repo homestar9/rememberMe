@@ -80,6 +80,20 @@ function preProcess( event, interceptData, buffer, rc, prc ) {
 
 Sometimes the first load of an app will throw an error stating that `remember` cannot be found.  I believe this has to do with a "chicken and egg" problem where sometimes every Coldbox dependency is loaded when the first `onSessionStart()` method executes.  I recommend using `preProcess()` instead of `onSessionStart()` to avoid this issue for now.
 
+## Intercetion Points
+
+### onRecall
+
+This is a custom interception point that fires when the `remember().recall()` method is called. You can use this to add custom logic, such as logging or additional processing, during the recall process.
+
+#### InterceptData
+
+| Name          | Description                                                                 |
+|---------------|-----------------------------------------------------------------------------|
+| user          | The user object returned by the `remember().recall()` method.              |
+| userId       | The ID of the user returned by the `remember().recall()` method.           |
+
+
 ## Future Development Roadmap
 
  - Testbox integration + test-harness setup.
