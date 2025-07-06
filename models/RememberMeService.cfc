@@ -11,6 +11,7 @@ component
     property name="settings" inject="coldbox:modulesettings:rememberMe";
     property name="userServiceClass" inject="coldbox:modulesettings:rememberMe:userServiceClass";
     property name="qb" inject="provider:QueryBuilder@qb";
+    property name="interceptorService" inject="coldbox:interceptorService";
 
 
     variables._table = "user_remember";
@@ -57,7 +58,11 @@ component
             } )
         ;
 
-        return getUserService().retrieveUserById( rememberMe.userId );
+        var user = getUserService().retrieveUserById( rememberMe.userId );
+
+        variables.interceptorService.announce( "onRecall", { user: user, userId: rememberMe.userId } );
+
+        return user;
 
     }
 

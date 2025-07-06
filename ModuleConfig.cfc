@@ -20,8 +20,7 @@ component {
         // Custom Events
         interceptorSettings = {
             customInterceptionPoints = [
-                "preRememberMe",
-                "postRememberMe"
+                "onRecall"
             ]
         };
     }
