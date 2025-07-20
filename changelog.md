@@ -1,5 +1,9 @@
 # Change Log
 
+## 1.1.1
+
+Version bump.
+
 ## 1.1.0
 
 Added custom interception point, `onRecall`, to interceptor settings in the module configuration. This interceptor fires when the `remember().recall()` method is called, allowing for custom logic to be executed during the recall process (like logging).
