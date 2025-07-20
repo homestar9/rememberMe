@@ -60,7 +60,10 @@ component
 
         var user = getUserService().retrieveUserById( rememberMe.userId );
 
-        variables.interceptorService.announce( "onRecall", { user: user, userId: rememberMe.userId } );
+        variables.interceptorService.announce( "onRecall", { 
+            "user": user, 
+            "userId": rememberMe.userId 
+        } );
 
         return user;
 
