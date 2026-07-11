@@ -1,0 +1,14 @@
+# This recipe signifies a new release of the module by doing merges and bumps accordingly
+
+# Check out main and update it locally
+!git checkout -f main
+!git pull origin main
+
+# Merge the working branch into it for release
+!git merge --no-ff modernization
+
+# Push all branches back out to github
+!git push origin --all
+
+# Check the working branch out again
+!git checkout -f modernization
