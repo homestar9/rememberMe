@@ -23,3 +23,12 @@ coldbox/*
 testbox/*
 modules/*
 modules/**/apidocs/**
+test-harness/coldbox/
+test-harness/testbox/
+test-harness/modules/
+
+## CommandBox server artifacts
+.engine/
+.artifacts/
+.tmp/
+test-results/

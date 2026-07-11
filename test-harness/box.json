@@ -1,0 +1,17 @@
+{
+    "name":"rememberMe Test Harness",
+    "version":"1.0.0",
+    "slug":"rememberme-test-harness",
+    "shortDescription":"ColdBox app whose only job is to load the rememberMe module and run its TestBox suite",
+    "private":true,
+    "dependencies":{
+        "coldbox":"^7.0.0"
+    },
+    "devDependencies":{
+        "testbox":"^5.0.0"
+    },
+    "installPaths":{
+        "coldbox":"coldbox/",
+        "testbox":"testbox/"
+    }
+}

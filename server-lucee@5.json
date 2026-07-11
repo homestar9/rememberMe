@@ -1,0 +1,24 @@
+{
+    "name":"rememberme-lucee@5",
+    "app":{
+        "serverHomeDirectory":".engine/lucee5",
+        "cfengine":"lucee@5"
+    },
+    "web":{
+        "http":{
+            "port":"60305"
+        },
+        "rewrites":{
+            "enable":"true"
+        },
+        "webroot":"test-harness",
+        "aliases":{
+            "/moduleroot/rememberme":"./",
+            "/modules/rememberme":"./"
+        }
+    },
+    "openBrowser":false,
+    "cfconfig":{
+        "file":".cfconfig.json"
+    }
+}

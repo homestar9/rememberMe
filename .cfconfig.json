@@ -1,0 +1,9 @@
+{
+    "requestTimeoutEnabled": true,
+    "requestTimeout": "0,0,5,0",
+    "whitespaceManagement": "white-space-pref",
+    "postParametersLimit": 5000,
+    "postSizeLimit": "100",
+    "scriptProtect": "none",
+    "robustExceptionEnabled": true
+}

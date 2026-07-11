@@ -1,6 +1,6 @@
 {
     "name":"Remember Me",
-    "version":"1.1.1",
+    "version":"1.2.0",
     "author":"Angry Sam Productions, Inc.",
     "location":"ForgeboxStorage",
     "homepage":"https://github.com/homestar9/rememberMe",
@@ -26,41 +26,46 @@
         }
     ],
     "contributors":[],
-    "dependencies":{},
-    "devDependencies":{
-        "testbox":"^4.5.0+5"
+    "dependencies":{
+        "qb":"^9.0.0"
     },
+    "devDependencies":{},
     "installPaths":{
-        "testbox":"testbox/"
+        "qb":"modules/qb/"
     },
-    "scripts":{},
-    "ignore":[
-        "**/.*",
-        "/test/",
-        "/tests/"
-    ],
-    "testbox":{
-        "bundles":"",
-        "directory":"tests.specs",
-        "excludes":"",
-        "labels":"",
-        "options":{},
-        "recurse":true,
-        "reporter":"",
-        "runner":[
-            {
-                "default":""
-            }
-        ],
-        "testBundles":"",
-        "testSpecs":"",
-        "testSuites":"",
-        "verbose":true,
-        "watchDelay":500,
-        "watchPaths":"**.cfc"
-    },
+    "ignore":[],
     "reinitWatchDirectory":"",
     "reinitWatchDelay":500,
     "reinitWatchPaths":"",
-    "readme":"https://github.com/homestar9/rememberMe/README.md"
+    "readme":"https://github.com/homestar9/rememberMe/README.md",
+    "scripts":{
+        "setupTemplate":"task run taskFile=build/SetupTemplate.cfc",
+        "build:module":"task run taskFile=build/Build.cfc :projectName=`package show slug` :version=`package show version`",
+        "build:docs":"task run taskFile=build/Build.cfc target=docs :projectName=`package show slug` :version=`package show version`",
+        "install:dependencies":"install && cd test-harness && install",
+        "create:admin":"task run taskFile=install/CreateAdmin.cfc",
+        "release":"recipe build/release.boxr",
+        "format":"cfformat run helpers,models,test-harness/tests/,ModuleConfig.cfc --overwrite",
+        "format:watch":"cfformat watch helpers,models,test-harness/tests/,ModuleConfig.cfc ./.cfformat.json",
+        "format:check":"cfformat check helpers,models,test-harness/tests/,ModuleConfig.cfc ./.cfformat.json",
+        "start:boxlang":"server start serverConfigFile=server-boxlang-cfml@1.json",
+        "start:lucee5":"server start serverConfigFile=server-lucee@5.json",
+        "start:lucee6":"server start serverConfigFile=server-lucee@6.json",
+        "start:2023":"server start serverConfigFile=server-adobe@2023.json",
+        "stop:boxlang":"server stop serverConfigFile=server-boxlang-cfml@1.json",
+        "stop:lucee5":"server stop serverConfigFile=server-lucee@5.json",
+        "stop:lucee6":"server stop serverConfigFile=server-lucee@6.json",
+        "stop:2023":"server stop serverConfigFile=server-adobe@2023.json",
+        "logs:boxlang":"server log serverConfigFile=server-boxlang-cfml@1.json",
+        "logs:lucee5":"server log serverConfigFile=server-lucee@5.json --follow",
+        "logs:lucee6":"server log serverConfigFile=server-lucee@6.json --follow",
+        "logs:2023":"server log serverConfigFile=server-adobe@2023.json --follow",
+        "forget:boxlang":"server forget serverConfigFile=server-boxlang-cfml@1.json",
+        "forget:lucee5":"server forget serverConfigFile=server-lucee@5.json",
+        "forget:lucee6":"server forget serverConfigFile=server-lucee@6.json",
+        "forget:2023":"server forget serverConfigFile=server-adobe@2023.json"
+    },
+    "testbox":{
+        "runner":"http://127.0.0.1:60305/tests/runner.cfm"
+    }
 }
