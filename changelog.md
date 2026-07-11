@@ -1,5 +1,15 @@
 # Change Log
 
+## 1.2.1
+
+### Fixed
+
+**The suite is now green on all four engines (Lucee 5, Lucee 6, Adobe 2023, BoxLang 1).** The 1.2.0 "Known issues" entry below is resolved:
+
+- The cookie write in `rememberMe()` is now a portable `cfcookie()` call with a DateTime `expires` instead of a Lucee-only attribute-struct assignment to the `cookie` scope. This fixes every `rememberMe()` call erroring on BoxLang (`Can't cast [30] to a DateTime`). `path="/"` is set on all engines except Adobe, whose `cfcookie` refuses `path` without `domain` — ACF defaults its cookies to `Path=/` anyway.
+- `cookieExists()` now treats an empty cookie value as absent. Adobe CF never removes an expired/deleted cookie's key from the in-request `cookie` scope — it leaves it behind with an empty value — so after `forgetMe()`, `recallMe()` on ACF threw `InvalidToken` where it should throw `MissingCookie`. An empty token is unusable regardless of engine, so "empty means missing" is the honest semantic everywhere.
+- `forgetMe()` uses `structDelete()` instead of the member-function form `cookie.delete()`.
+
 ## 1.2.0
 
 ### Security
@@ -24,7 +34,7 @@ The net effect was that the validator comparison in `recallMe()` never rejected 
 - A TestBox `test-harness/` with unit and integration suites (46 specs). See `AGENTS.md` for how to run them, and for the per-engine status matrix.
 - `qb` is now declared as a dependency in `box.json`. `ModuleConfig.cfc` has always declared `this.dependencies = [ "qb" ]`, but `box install rememberMe` never actually installed it.
 
-### Known issues
+### Known issues (fixed in 1.2.1)
 
 The cookie write in `rememberMe()` assigns a struct of cookie attributes to the `cookie` scope, which is Lucee-specific. The suite is green on Lucee 5 and 6, and fails on Adobe 2023 (4 specs) and BoxLang (16 specs) because of it. See `AGENTS.md` for detail.
 

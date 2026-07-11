@@ -54,15 +54,16 @@ Stop the engine (`box run-script stop:lucee5`) before starting another; they all
 |---|---|---|---|
 | Lucee 5.4.8 | 6/6 | 18/18 | **22/22** |
 | Lucee 6.2.7 | 6/6 | 18/18 | **22/22** |
-| Adobe 2023 | 6/6 | 18/18 | 18/22 |
-| BoxLang 1 | 6/6 | 18/18 | 6/22 |
+| Adobe 2023 | 6/6 | 18/18 | **22/22** |
+| BoxLang 1 | 6/6 | 18/18 | **22/22** |
 
-**Red on Adobe and BoxLang is expected. It is a real module bug, not a harness bug and not a regression.** Both trace to one thing: the cookie write in `rememberMe()` ([RememberMeService.cfc:103-111](models/RememberMeService.cfc#L103-L111)) assigns a **struct of cookie attributes** to the `cookie` scope, which is a Lucee feature.
+All four engines are green as of 1.2.1. Before that, Adobe failed 4 integration specs and BoxLang errored on 16, because the cookie write in `rememberMe()` assigned a **struct of cookie attributes** to the `cookie` scope — a Lucee-only idiom (BoxLang additionally rejected the integer day-count `expires`). The service's cookie handling is now deliberately shaped around three engine quirks; keep them in mind before "cleaning it up":
 
-- **BoxLang** (16 errors): `Can't cast [30] to a DateTime`. BoxLang accepts the struct form but requires `expires` to be a DateTime, not the day-count integer Lucee takes. Every spec that calls `rememberMe()` dies.
-- **Adobe 2023** (4 failures): the *write* works, but `forgetMe()`'s `cfcookie( expires="now" )` + `cookie.delete()` does not remove the key from ACF's in-request cookie scope. `cookieExists()` stays true, so `recallMe()` throws `InvalidToken` where it should throw `MissingCookie`.
+- **The write is a `cfcookie()` call with a DateTime `expires`, built via `attributeCollection`.** The struct is needed because ACF's `cfcookie` refuses `path` without `domain` — at *compile* time, so a literal `path=` attribute in the source breaks ACF even inside dead code. The service adds `path="/"` on non-Adobe engines only; ACF defaults its cookies to `Path=/` anyway, so behaviour matches.
+- **ACF never removes a cookie key from the in-request `cookie` scope.** Every deletion mechanism — `cfcookie( expires="now" )`, `structDelete()`, `cookie.delete()`, plain reassignment — just queues an expiring response cookie, and that queued cookie shows straight back through the scope as a key with an **empty value** (`structDelete` even re-adds it under an UPPERCASE name). There is no way to make `structKeyExists( cookie, name )` go false on ACF once the name has been touched.
+- Therefore **`cookieExists()` treats an empty value as absent**. That is the entire ACF fix: after `forgetMe()`, the key survives in ACF's scope but its value is `""`, which `cookieExists()` (and hence `recallMe()`, correctly throwing `MissingCookie`) reads as "no cookie". Lucee and BoxLang genuinely remove the key, so the `len()` check is a no-op there.
 
-The portable fix is to rewrite the write as a `cfcookie()` call (the form `forgetMe()` already uses) with a real date for `expires`. That was deliberately **not** done — the decision was to let the suite document the break rather than silently change behaviour. Fix it and all four engines should go green.
+Browser-side deletion is done by `forgetMe()`'s `cfcookie( expires="now", preserveCase=true )` — `preserveCase` matters because browsers match cookie names case-sensitively, and ACF's `structDelete` emits its junk expiry header uppercased.
 
 ## Writing specs
 

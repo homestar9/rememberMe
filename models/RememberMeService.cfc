@@ -106,15 +106,26 @@ component
             } )
         ;
 
-        cookie[ variables._cookieName ] = {
-            httpOnly = "true",
-            preserveCase = "true",
-            secure = booleanFormat( cgi.SERVER_PORT_SECURE ),
-            expires = variables.settings.days,
-            sameSite = "lax",
-            path = "/",
-            value = encryptToken( rememberMe.selector & "_" & validator )
+        // cfcookie() with a DateTime `expires` is the one form every engine agrees on: assigning
+        // an attribute struct to the cookie scope is Lucee-only (ACF's scope can't clear it,
+        // BoxLang rejects an integer day-count for expires).
+        var cookieAttributes = {
+            name         : variables._cookieName,
+            value        : encryptToken( rememberMe.selector & "_" & validator ),
+            expires      : dateAdd( "d", variables.settings.days, now() ),
+            httpOnly     : true,
+            secure       : booleanFormat( cgi.SERVER_PORT_SECURE ),
+            sameSite     : "lax",
+            preserveCase : true
         };
+
+        // Adobe's cfcookie only accepts `path` alongside `domain`, and a domain cookie is broader
+        // than we want — so on ACF the cookie keeps the browser's default path instead.
+        if ( !findNoCase( "ColdFusion", server.coldfusion.productname ) ) {
+            cookieAttributes.path = "/";
+        }
+
+        cfcookie( attributeCollection = cookieAttributes );
 
     }
 
@@ -136,9 +147,9 @@ component
             name=variables._cookieName,
             expires="now",
             preserveCase=true
-        ); 
+        );
 
-        cookie.delete( variables._cookieName );
+        structDelete( cookie, variables._cookieName );
 
     }
 
@@ -260,10 +271,13 @@ component
 
     /**
      * Cookie Exists?
-     * Returns true/false whether the remember me cookie exists in the browser
+     * Returns true/false whether the remember me cookie exists in the browser.
+     * An empty value counts as absent: Adobe CF never removes an expired cookie's key from the
+     * in-request cookie scope — it leaves it behind with an empty value — and an empty token is
+     * unusable anyway.
      */
     boolean function cookieExists() {
-        return cookie.keyExists( variables._cookieName );
+        return cookie.keyExists( variables._cookieName ) && len( cookie[ variables._cookieName ] );
     }
 
 
