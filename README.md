@@ -4,12 +4,16 @@
 
 RememberMe is a Coldbox module designed to work in conjunction with your authentication system to "remember" and automatically log in users on subsequent website visits.  
 
+## Engine Support
+
+- Lucee 5+
+- Adobe ColdFusion 2023+
+- Boxlang 1+
+
 ## Requirements
 
- - Lucee 5+
- - Adobe ColdFusion 2016+
- - Coldbox 6+
- - Cbauth or your own authentication provider
+- Coldbox 8+
+- Cbauth or your own authentication provider
 
 ## Installation
 
@@ -96,10 +100,7 @@ This is a custom interception point that fires when the `remember().recall()` me
 
 ## Future Development Roadmap
 
- - Testbox integration + test-harness setup.
- - Get community feedback for improving the module and documentation.
- - Automatically create table in datasource if missing.
- - Ability to customize the table name based on config.
- - Learn how to implement building/versioning like other Coldbox modules.
- - Utilize some interceptor methods for custom behavior.
- - Add some type of database cleanup operation to purge old records
+- Get community feedback for improving the module and documentation.
+- Automatically create table in datasource if missing.
+- Ability to customize the table name based on config.
+- Add a database cleanup operation to purge old records
