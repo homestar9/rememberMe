@@ -82,10 +82,15 @@ component
         // expire any old cookie
         forgetMe();
 
+        // The cookie carries the RAW validator; the database stores only its hash. That asymmetry
+        // is the entire point of the selector/validator scheme: a leaked database gives an
+        // attacker hashes it cannot present back to us.
+        var validator = createUuid();
+
         var rememberMe = {
             "userId": arguments.userId,
             "selector": createUuid(),
-            "hashedValidator": hashValidator( createUuid() )
+            "hashedValidator": hashValidator( validator )
         };
 
         qb.from( variables._table )
@@ -96,6 +101,7 @@ component
                 ipAddress = { value = cgi.REMOTE_HOST, cfsqltype = "varchar" },
                 userAgent = { value = cgi.HTTP_USER_AGENT, cfsqltype = "varchar" },
                 createdDate = { value = now(), cfsqltype = "timestamp" },
+                modifiedDate = { value = now(), cfsqltype = "timestamp" },
                 expirationDate = { value = dateAdd( 'd', variables.settings.days, now() ), cfsqltype = "timestamp" }
             } )
         ;
@@ -107,7 +113,7 @@ component
             expires = variables.settings.days,
             sameSite = "lax",
             path = "/",
-            value = encryptToken( rememberMe.selector & "_" & rememberMe.hashedValidator )
+            value = encryptToken( rememberMe.selector & "_" & validator )
         };
 
     }
@@ -307,7 +313,7 @@ component
      * Checks to see if a challenger string exactly matches the hashedvalidator value
      */
     private function isMatch( required string challenger, required string hashedValidator ) {
-        return ( compare( arguments.hashedValidator, arguments.challenger ) != 0 );
+        return ( compare( arguments.hashedValidator, arguments.challenger ) == 0 );
     }
 
     
