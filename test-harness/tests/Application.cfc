@@ -41,24 +41,31 @@ component {
 	// error handler exists, so you get a bare 500 with an empty body and nothing in the logs.
 	include "/config/Datasource.cfm";
 
-	public boolean function onRequestStart( string targetPage ) {
-		setting requestTimeout="900";
+	function onRequestStart( required targetPage ){
 
+		// Set a high timeout for long running tests
+		setting requestTimeout="9999";
+		// New ColdBox Virtual Application Starter
 		request.coldBoxVirtualApp = new coldbox.system.testing.VirtualApp( appMapping = "/root" );
 
-		if ( structKeyExists( url, "fwreinit" ) ) {
-			if ( structKeyExists( server, "lucee" ) ) {
-				pagePoolClear();
-			}
-			request.coldBoxVirtualApp.shutdown();
+		// If hitting the runner or specs, prep our virtual app
+		if ( getBaseTemplatePath().replace( expandPath( "/tests" ), "" ).reFindNoCase( "(runner|specs)" ) ) {
+			request.coldBoxVirtualApp.startup();
 		}
 
-		request.coldBoxVirtualApp.startup();
+		// ORM Reload for fresh results
+		if( structKeyExists( url, "fwreinit" ) ){
+			if( structKeyExists( server, "lucee" ) ){
+				pagePoolClear();
+			}
+			// ormReload();
+			request.coldBoxVirtualApp.restart();
+		}
 
 		return true;
 	}
 
-	public void function onRequestEnd( string targetPage ) {
+	public void function onRequestEnd( required targetPage ) {
 		request.coldBoxVirtualApp.shutdown();
 	}
 

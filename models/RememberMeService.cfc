@@ -10,11 +10,10 @@ component
     property name="wirebox" inject="wirebox";
     property name="settings" inject="coldbox:modulesettings:rememberMe";
     property name="userServiceClass" inject="coldbox:modulesettings:rememberMe:userServiceClass";
-    property name="qb" inject="provider:QueryBuilder@qb";
+    property name="tokenStorageClass" inject="coldbox:modulesettings:rememberMe:tokenStorageClass";
     property name="interceptorService" inject="coldbox:interceptorService";
 
 
-    variables._table = "user_remember";
     variables._cookieName = "rememberMe-#application.applicationName#";
     
     
@@ -47,16 +46,13 @@ component
             throw( type="InvalidToken", message="Invalid remember me token" );
         }
 
-        // Update the database
-        qb.from( variables._table )
-            .whereId( rememberMe.id )
-            .update( {
-                ipAddress = { value = cgi.REMOTE_HOST, cfsqltype = "varchar" },
-                userAgent = { value = cgi.HTTP_USER_AGENT, cfsqltype = "varchar" },
-                lastUsedDate = { value = now(), cfsqltype = "timestamp" },
-                modifiedDate = { value = now(), cfsqltype = "timestamp" }
-            } )
-        ;
+        // Stamp the audit columns. The service assembles the values — storage just persists them.
+        getTokenStorage().updateUsage( parsedToken.selector, {
+            "ipAddress": cgi.REMOTE_HOST,
+            "userAgent": cgi.HTTP_USER_AGENT,
+            "lastUsedDate": now(),
+            "modifiedDate": now()
+        } );
 
         var user = getUserService().retrieveUserById( rememberMe.userId );
 
@@ -87,24 +83,20 @@ component
         // attacker hashes it cannot present back to us.
         var validator = createUuid();
 
+        // The service computes every value — dates included — so a storage provider is a dumb
+        // persister with no policy of its own. Note storage receives the HASHED validator only.
         var rememberMe = {
             "userId": arguments.userId,
             "selector": createUuid(),
-            "hashedValidator": hashValidator( validator )
+            "hashedValidator": hashValidator( validator ),
+            "ipAddress": cgi.REMOTE_HOST,
+            "userAgent": cgi.HTTP_USER_AGENT,
+            "createdDate": now(),
+            "modifiedDate": now(),
+            "expirationDate": dateAdd( 'd', variables.settings.days, now() )
         };
 
-        qb.from( variables._table )
-            .insert( {
-                userId: arguments.userId,
-                selector: rememberMe.selector,
-                hashedValidator: rememberMe.hashedValidator,
-                ipAddress = { value = cgi.REMOTE_HOST, cfsqltype = "varchar" },
-                userAgent = { value = cgi.HTTP_USER_AGENT, cfsqltype = "varchar" },
-                createdDate = { value = now(), cfsqltype = "timestamp" },
-                modifiedDate = { value = now(), cfsqltype = "timestamp" },
-                expirationDate = { value = dateAdd( 'd', variables.settings.days, now() ), cfsqltype = "timestamp" }
-            } )
-        ;
+        getTokenStorage().create( rememberMe );
 
         // cfcookie() with a DateTime `expires` is the one form every engine agrees on: assigning
         // an attribute struct to the cookie scope is Lucee-only (ACF's scope can't clear it,
@@ -161,7 +153,7 @@ component
      * @token
      */
     void function expireToken( required string token ) {
-        qb.from( variables._table ).where( "selector", parseToken( arguments.token ).selector ).delete();
+        getTokenStorage().deleteBySelector( parseToken( arguments.token ).selector );
     }
 
 
@@ -172,7 +164,7 @@ component
      * @userId
      */
     void function deleteByUserId( required numeric userId ) {
-        qb.from( variables._table ).where( "userId", arguments.userId ).delete();
+        getTokenStorage().deleteByUserId( arguments.userId );
     }
 
 
@@ -183,7 +175,27 @@ component
      * @token 
      */
     void function deleteAll() {
-        qb.from( variables._table ).delete();
+        getTokenStorage().deleteAll();
+    }
+
+
+    /**
+     * Purge Expired
+     * Deletes rows whose expirationDate passed more than graceDays ago
+     * ( expirationDate < now() - graceDays ). Run daily by the module scheduler.
+     *
+     * @graceDays Days past expiration to retain rows. Defaults to the purgeGraceDays setting.
+     *
+     * @return The number of rows deleted
+     */
+    numeric function purgeExpired( numeric graceDays ) {
+
+        if ( isNull( arguments.graceDays ) ) {
+            arguments.graceDays = variables.settings.purgeGraceDays;
+        }
+
+        // Grace-period policy lives here; storage just deletes everything expired before a date.
+        return getTokenStorage().deleteExpiredBefore( dateAdd( "d", -arguments.graceDays, now() ) );
     }
 
 
@@ -194,18 +206,9 @@ component
      * @selector 
      */
     struct function getBySelector( required string selector ) {
-        return ( 
-            len( arguments.selector ) ? 
-                qb
-                    .select()
-                    .from( variables._table )
-                    .where( "selector", "=", { 
-                        value = arguments.selector, 
-                        cfsqltype = "varchar" 
-                } ).first() : 
-                {} 
-            )
-        ;
+        // The empty-selector short-circuit stays HERE, so storage providers may assume a
+        // non-empty selector (interfaces/ITokenStorage.cfc documents that guarantee).
+        return len( arguments.selector ) ? getTokenStorage().getBySelector( arguments.selector ) : {};
     }
 
 
@@ -301,6 +304,30 @@ component
 		}
 
 		return variables.userService;
+	}
+
+
+	/**
+	 * getTokenStorage
+	 * Get the token storage provider configured by the settings. Defaults to the module's own
+	 * qb-backed QBTokenStorage; see interfaces/ITokenStorage.cfc for the contract a custom
+	 * provider must satisfy.
+	 *
+	 * @throws IncompleteConfiguration
+	 */
+	private any function getTokenStorage() {
+		if ( !structKeyExists( variables, "tokenStorage" ) ) {
+			if ( variables.tokenStorageClass == "" ) {
+				throw(
+					type    = "IncompleteConfiguration",
+					message = "No [tokenStorageClass] provided.  Please set in `config/ColdBox.cfc` under `moduleSettings.rememberMe.tokenStorageClass`."
+				);
+			}
+
+			variables.tokenStorage = variables.wirebox.getInstance( dsl = variables.tokenStorageClass );
+		}
+
+		return variables.tokenStorage;
 	}
 
 

@@ -202,7 +202,7 @@ component extends="tests.resources.BaseIntegrationSpec" {
 					var selector = allTokens()[ 1 ].selector;
 
 					queryExecute(
-						"update user_remember set expirationDate = :expired where selector = :selector",
+						"update #variables.TABLE# set expirationDate = :expired where selector = :selector",
 						{
 							expired  : { value : dateAdd( "d", -1, now() ), cfsqltype : "timestamp" },
 							selector : { value : selector, cfsqltype : "varchar" }

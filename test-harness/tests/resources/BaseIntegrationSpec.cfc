@@ -33,16 +33,34 @@ component extends="coldbox.system.testing.BaseTestCase" {
 
 	// No `property inject="wirebox"` — spec bundles aren't autowired, and ACF rejects a property
 	// declared after this.*. Use BaseTestCase's getWireBox() / getInstance(). See BaseUnitSpec.
+	// Pre-boot default only — beforeAll() re-derives this from the module's `table` setting.
 	variables.TABLE = "user_remember";
 
+	/**
+	 * DO NOT add request.coldBoxVirtualApp.restart() here.
+	 *
+	 * It looks like good hygiene — a fresh WireBox per bundle — and it is actively harmful. Every
+	 * bundle in a `?directory=` run shares ONE request, and ColdBox 7's WireBox memoises each
+	 * transient's resolved dependencies for the request in `request.cbTransientDICache`. Restart
+	 * mid-request and the cache still holds the PREVIOUS boot's (now shut-down) interceptorService /
+	 * wirebox / cachebox, which WireBox then injects into every transient it rebuilds. The service
+	 * ends up announcing onRecall into a dead InterceptorService that no registered interceptor
+	 * listens to, and ColdBoxScheduledTask ends up with an empty CacheFactory. Both symptoms appear
+	 * ONLY from the second bundle onward, so every bundle passes when run alone.
+	 *
+	 * There is nothing to purge anyway: RememberMeService@rememberMe is NoScope (a transient — see
+	 * ModuleConfig.onLoad), and BaseUnitSpec mocks via createMock() on a fresh instance, never on a
+	 * WireBox-managed one. The VirtualApp that Application.cfc boots per request is all the
+	 * isolation this suite needs; per-spec request state is handled by resetState() -> setup().
+	 */
 	function beforeAll() {
-		// Purge WireBox singletons (and any $property() mocks a previous bundle left on them) so
-		// the service under test here is the real, fully-wired one.
-		request.coldBoxVirtualApp.restart();
 		super.beforeAll();
 
-		// The real singleton, with its real qb / interceptorService / settings injected.
+		// The real, fully-wired service.
 		variables.service = getInstance( "RememberMeService@rememberMe" );
+
+		// The table the default storage actually uses — one source of truth, no hardcode drift.
+		variables.TABLE = getInstance( dsl = "coldbox:modulesettings:rememberMe" ).table;
 	}
 
 	function afterAll() {

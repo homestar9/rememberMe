@@ -8,16 +8,31 @@ RememberMe is a Coldbox Module that provides a "remember me" functionality for u
 
 ## Architecture
 
-The module is small. Four files carry all of it:
+The module is small. Seven files carry all of it:
 
-- `ModuleConfig.cfc` — settings (`userServiceClass`, `tokenEncryptKey`, `tokenEncryptAlgorithm`, `validatorHashAlgorithm`, `days`), the custom interception point `onRecall`, `this.dependencies = [ "qb" ]`, and the WireBox mapping for `RememberMeService@rememberMe`.
-- `models/RememberMeService.cfc` — the whole implementation. Raw `qb` against a hardcoded `user_remember` table, plus the native `cookie` scope. No ORM, no cbstorages, no cachebox.
+- `ModuleConfig.cfc` — settings (`userServiceClass`, `tokenEncryptKey`, `tokenEncryptAlgorithm`, `validatorHashAlgorithm`, `days`, `autoPurge`, `purgeGraceDays`, `purgeTime`, `tokenStorageClass`, `table`, `datasource`), the custom interception point `onRecall`, `this.dependencies = [ "qb" ]`, and the WireBox mappings for `RememberMeService@rememberMe` and `QBTokenStorage@rememberMe` (both NoScope — `binder.map().to()` with no annotation is a transient, not a singleton).
+- `models/RememberMeService.cfc` — the domain logic: cookie handling (native `cookie` scope), all crypto, the recall/remember/forget lifecycle. Since 1.4.0 it holds **no persistence** — every read/write goes through the storage provider resolved from `tokenStorageClass` (lazy, memoised per instance in `getTokenStorage()`, mirroring `getUserService()`).
+- `models/QBTokenStorage.cfc` — the default storage provider: raw `qb` against the `table` setting on the `datasource` setting ("" = the application default, passed per-query via qb's `options` struct). No ORM, no cbstorages, no cachebox.
+- `config/Scheduler.cfc` — the module scheduler (auto-registered by ColdBox as `cbScheduler@rememberMe`). One task, `rememberMe-purge-expired-tokens`, runs `purgeExpired()` daily at `purgeTime`; `.when()` gates it on `autoPurge` at runtime, so disabling leaves the task registered but inert. See the scheduler gotchas below before touching it.
 - `interfaces/IUserRememberService.cfc` — the one-method contract (`retrieveUserById`) a host app's `userServiceClass` must satisfy.
+- `interfaces/ITokenStorage.cfc` — the seven-method contract (`create`, `getBySelector`, `updateUsage`, `deleteBySelector`, `deleteByUserId`, `deleteAll`, `deleteExpiredBefore`) a custom `tokenStorageClass` must satisfy. Documentation-style, never enforced with `implements=` in the module itself; the harness's `StubTokenStorage` does implement it, proving it satisfiable.
 - `helpers/Mixins.cfm` — the `remember()` application helper.
+
+**The storage seam's two invariants** (both spec-guarded; do not trade them away):
+
+- **All crypto stays in the service.** A storage provider only ever sees the selector and the ALREADY-HASHED validator, never the raw validator — so a custom provider cannot recreate the pre-1.2.0 bug.
+- **Plain values only across the interface** (strings, numerics, native dates). The service computes everything, dates included; storage stamps nothing and holds no policy (grace-period math included — `deleteExpiredBefore` receives a cutoff *date*). qb's `cfsqltype` annotations are QBTokenStorage's internal business and must not leak into the contract.
 
 **The token scheme.** `rememberMe()` generates a `selector` and a `validator` (both UUIDs). The cookie carries `encrypt( selector & "_" & rawValidator )`; the database stores the selector alongside `hash( validator )`. On recall, the cookie's raw validator is hashed and compared to the stored hash. That asymmetry is the point: a stolen database yields hashes an attacker cannot present back. **Do not "simplify" this by storing the same value in both places** — that is precisely the bug that was fixed in 1.2.0, and `test-harness/tests/specs/integration/RecallSpec.cfc` has a spec ("throws InvalidToken for a real selector with a forged validator") that fails loudly if it regresses.
 
-There is **no token rotation**: recall updates only the audit columns (`ipAddress`, `userAgent`, `lastUsedDate`, `modifiedDate`). The selector/validator and `expirationDate` persist for the life of the row.
+There is **no token rotation**: recall updates only the audit columns (`ipAddress`, `userAgent`, `lastUsedDate`, `modifiedDate`). The selector/validator and `expirationDate` persist for the life of the row. Since 1.3.0 that life has an end: `purgeExpired()` deletes rows whose `expirationDate` passed more than `purgeGraceDays` days ago, run daily by the module scheduler (expired rows were already unusable — `recallMe()` rejects them — so purging is hygiene, never a behaviour change).
+
+**Scheduler gotchas** (all verified against the vendored ColdBox 7 source in `test-harness/coldbox/`):
+
+- `config/Scheduler.cfc` must be a **plain component** with `configure()` — ColdBox applies virtual inheritance from `ColdBoxScheduler` at load (`SchedulerService.loadScheduler`). Do not add `extends`. Inside `configure()` you get `task()`, `getInstance()`, `log`, and the `moduleSettings` mixin.
+- The task uses `everyDayAt( purgeTime )` deliberately: `every( n, "days" )` fires its first run **immediately at scheduler startup** — an immediate-fire purge would DELETE mid-suite whenever the harness boots. `everyDayAt` computes a delay to the next occurrence and never fires at startup.
+- `.when()` is evaluated at **runtime** per tick, not at scheduling — an `autoPurge=false` task stays registered (ModuleSpec asserts on this) but no-ops. `task.run( force = true )` bypasses both the schedule and `.when()`; `PurgeSpec` uses it to drive the task end-to-end.
+- Late module registration is safe: LoaderService announces `afterAspectsLoad` **before** `startupSchedulers()`, so the harness's `registerAndActivateModule` in `afterAspectsLoad` still gets the scheduler registered and started.
 
 ## Running tests (TestBox)
 
@@ -52,12 +67,12 @@ Stop the engine (`box run-script stop:lucee5`) before starting another; they all
 
 | Engine | ModuleSpec | Unit | Integration |
 |---|---|---|---|
-| Lucee 5.4.8 | 6/6 | 18/18 | **22/22** |
-| Lucee 6.2.7 | 6/6 | 18/18 | **22/22** |
-| Adobe 2023 | 6/6 | 18/18 | **22/22** |
-| BoxLang 1 | 6/6 | 18/18 | **22/22** |
+| Lucee 5.4.8 | 10/10 | 32/32 | **31/31** |
+| Lucee 6.2.7 | 10/10 | 32/32 | **31/31** |
+| Adobe 2023 | 10/10 | 32/32 | **31/31** |
+| BoxLang 1 | 10/10 | 32/32 | **31/31** |
 
-All four engines are green as of 1.2.1. Before that, Adobe failed 4 integration specs and BoxLang errored on 16, because the cookie write in `rememberMe()` assigned a **struct of cookie attributes** to the `cookie` scope — a Lucee-only idiom (BoxLang additionally rejected the integer day-count `expires`). The service's cookie handling is now deliberately shaped around three engine quirks; keep them in mind before "cleaning it up":
+All four engines are green as of 1.3.0 (counts grew in 1.4.0: the storage abstraction added `QBTokenStorageSpec` (6 unit), `CustomStorageSpec` (4 integration), storage-delegation unit specs, and ModuleSpec storage assertions; in 1.3.0: `PurgeSpec` added 5 integration specs, ModuleSpec added scheduler/purge-settings assertions). All four engines were first green in 1.2.1. Before that, Adobe failed 4 integration specs and BoxLang errored on 16, because the cookie write in `rememberMe()` assigned a **struct of cookie attributes** to the `cookie` scope — a Lucee-only idiom (BoxLang additionally rejected the integer day-count `expires`). The service's cookie handling is now deliberately shaped around three engine quirks; keep them in mind before "cleaning it up":
 
 - **The write is a `cfcookie()` call with a DateTime `expires`, built via `attributeCollection`.** The struct is needed because ACF's `cfcookie` refuses `path` without `domain` — at *compile* time, so a literal `path=` attribute in the source breaks ACF even inside dead code. The service adds `path="/"` on non-Adobe engines only; ACF defaults its cookies to `Path=/` anyway, so behaviour matches.
 - **ACF never removes a cookie key from the in-request `cookie` scope.** Every deletion mechanism — `cfcookie( expires="now" )`, `structDelete()`, `cookie.delete()`, plain reassignment — just queues an expiring response cookie, and that queued cookie shows straight back through the scope as a key with an **empty value** (`structDelete` even re-adds it under an UPPERCASE name). There is no way to make `structKeyExists( cookie, name )` go false on ACF once the name has been touched.
@@ -69,10 +84,11 @@ Browser-side deletion is done by `forgetMe()`'s `cfcookie( expires="now", preser
 
 Both base classes extend `coldbox.system.testing.BaseTestCase`. Use its `getInstance()` / `getWireBox()` — do not hardcode component paths, do not `createObject()`.
 
-- **`tests.resources.BaseUnitSpec`** — no DB, no qb, no cookies. `buildService()` returns a service with its private methods exposed (`makePublic`) and its settings pinned via `$property()`. It builds a **fresh instance** per call (`createMock()` on the path taken from the WireBox binder) rather than `getInstance()`, because `RememberMeService@rememberMe` is a **singleton** and several specs need two services with *different* settings to compare (e.g. "cannot be decrypted with a different key"). Off `getInstance()` those would be the same object, `$property()` on the second would mutate the first, and the comparison would prove nothing.
-- **`tests.resources.BaseIntegrationSpec`** — real DB, real qb, real cookie scope. `variables.service` is the genuine wired singleton from `getInstance()`. Helpers: `resetState()`, `allTokens()`, `tokenCount()`, `forgeToken( selector, validator )`, `putRememberCookie()`, `recallSpy()`.
+- **`tests.resources.BaseUnitSpec`** — no DB, no qb, no cookies. `buildService()` returns a service with its private methods exposed (`makePublic`) and its settings pinned via `$property()`. It builds a **fresh instance** per call (`createMock()` on the path taken from the WireBox binder) rather than `getInstance()`: several specs need two services with *different* settings to compare (e.g. "cannot be decrypted with a different key"), and a mock built this way is independent of WireBox entirely. (Note: despite older comments, the mapping is **not** a singleton — `binder.map().to()` with no annotation is NoScope, so every `getInstance()` builds a new transient.)
+- **`tests.resources.BaseIntegrationSpec`** — real DB, real qb, real cookie scope. `variables.service` is the genuine wired service from `getInstance()`. Helpers: `resetState()`, `allTokens()`, `tokenCount()`, `forgeToken( selector, validator )`, `putRememberCookie()`, `recallSpy()`. `variables.TABLE` is re-derived from the module's `table` setting in `beforeAll()` — don't hardcode the table name in specs.
+- Storage-seam specs: `unit/QBTokenStorageSpec` covers the settings derivation (no DB); `integration/CustomStorageSpec` drives the full lifecycle through the in-memory `test-harness/models/StubTokenStorage.cfc`. When a spec needs a custom provider, override `tokenStorageClass` on a `prepareMock()`ed service instance **inside the spec** — never in `test-harness/config/Coldbox.cfc`, which would silently swap the storage under every other integration bundle.
 
-Both call `request.coldBoxVirtualApp.restart()` in `beforeAll()` to purge WireBox singletons — and any `$property()` mocks a previous bundle left on them — between bundles.
+Neither restarts the virtual app — see trap 6, which is the single most expensive thing to rediscover in this harness. Per-spec isolation comes from `resetState()`, whose first act is `setup()` (BaseTestCase's per-spec request reset — without it ColdBox treats every spec in a bundle as one request).
 
 ### Traps that will cost you an afternoon
 
@@ -87,6 +103,7 @@ Both call `request.coldBoxVirtualApp.restart()` in `beforeAll()` to purge WireBo
 3. **`this.name` must not contain spaces.** The service derives its cookie name as `"rememberMe-" & application.applicationName`, and HTTP cookie names must be RFC 6265 tokens. Hence `rememberMe-harness` / `rememberMe-tests`.
 4. **An interceptor listening for `onRecall` must be registered AFTER the module.** ColdBox binds an interceptor's methods to interception points at *registration* time, and `onRecall` is a custom point that only exists once rememberMe has registered. Declare it in the `interceptors` config array and its `onRecall()` is silently never bound — the event fires and nothing hears it. See `afterAspectsLoad()` in `test-harness/config/Coldbox.cfc`, which registers `RecallSpy` explicitly after the module.
 5. **Coverage must stay off.** TestBox coverage instrumentation compiles every CFML file in its path, including ColdBox's CacheBox report skin, which uses the chart tag — Lucee 6 dropped that tag from core, so coverage-on means *every* Lucee 6 run dies before a single spec executes. `tests/runner.cfm` defaults `coverage` to false. Same reason `debugMode` is false in the harness config.
+6. **Never call `request.coldBoxVirtualApp.restart()` in a spec's `beforeAll()`.** It reads as good hygiene and it silently breaks every bundle after the first. All bundles in a `?directory=` run share ONE request, and ColdBox 7's WireBox memoises each transient's resolved dependencies for the request in `request.cbTransientDICache`. Restart mid-request and that cache still holds the **previous, shut-down boot's** `interceptorService` / `wirebox` / `cachebox`, which WireBox then injects into every transient it rebuilds. Two symptoms, both of which cost an afternoon: the service announces `onRecall` into a dead InterceptorService (so `RecallSpy` hears nothing and the spec fails "Expected [1] but received [0]"), and `ColdBoxScheduledTask` gets an empty CacheFactory (so `task.run()` dies with "Cache template is not registered" in its post-run cleanup). Both appear **only from the second bundle onward** — every bundle passes when run alone, which is what makes it so disorienting. Only build-time property injection reads the cache; a direct `getInstance( dsl = "coldbox:interceptorService" )` returns the live one, so the two disagree and the wiring looks fine everywhere you'd think to look. There is nothing to purge by restarting anyway: the service mapping is NoScope (a transient), and `BaseUnitSpec` mocks a `createMock()` instance that WireBox never manages. The per-request VirtualApp from `tests/Application.cfc` is all the app-level isolation the suite needs.
 
 ### Engine portability gotchas hit while building this harness
 
@@ -111,8 +128,9 @@ qb's grammar is **pinned** to `SqlServerGrammar@qb` in the harness config rather
 
 ## Module gotchas worth knowing
 
-- `variables._table = "user_remember"` and the cookie name are **hardcoded** in the service. Configurable table name is on the roadmap.
-- `user_remember.modifiedDate` is `NOT NULL` with **no default**, so `rememberMe()`'s INSERT must supply it. It does (this was a bug fixed in 1.2.0 — the INSERT omitted it, which meant the module could not write a row to its own documented schema). Canonical schema: `test-harness/tests/resources/schema.sql`.
+- The table name and datasource are configurable since 1.4.0 (`table`, `datasource` settings, consumed by `QBTokenStorage`). The cookie name is still **hardcoded** (`"rememberMe-" & application.applicationName`).
+- **qb's `delete()` takes `( id, idColumnName, options )`** — the options struct is the THIRD positional parameter, so it must be passed as a named argument (`.delete( options = getQueryOptions() )`). Passed positionally it becomes an id filter and the datasource option is silently dropped. The other terminal methods (`insert`, `update`, `first`, `get`) take options second and QBTokenStorage names it everywhere anyway.
+- `user_remember.modifiedDate` is `NOT NULL` with **no default**, so the INSERT (`QBTokenStorage.create()`, values supplied by `rememberMe()`) must supply it. It does (this was a bug fixed in 1.2.0 — the INSERT omitted it, which meant the module could not write a row to its own documented schema). Canonical schema: `test-harness/tests/resources/schema.sql`.
 - `getCookie()` is not null-safe — it throws if the cookie is absent. Gate on `cookieExists()`.
-- `getUserService()` memoises into `variables.userService` on first call.
+- `getUserService()` and `getTokenStorage()` memoise into `variables.userService` / `variables.tokenStorage` on first call (per service instance — the mapping is NoScope).
 - The `remember()` helper comes from `this.applicationHelper`. In the harness the module is registered late (`afterAspectsLoad`), after ColdBox's helper-injection pass has already run, so `config/Coldbox.cfc` must re-announce `cbLoadInterceptorHelpers` or `remember()` silently does not exist. This is very likely the same root cause as the README's "Known Issues" note about `remember` being unresolvable on first load.

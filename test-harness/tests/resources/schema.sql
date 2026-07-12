@@ -1,6 +1,7 @@
 /*
 	Canonical schema for the rememberMe module (SQL Server).
-	The module hardcodes the table name `user_remember` (models/RememberMeService.cfc).
+	`user_remember` is the DEFAULT table name — configurable since 1.4.0 via the `table` setting,
+	consumed by the default storage (models/QBTokenStorage.cfc). The harness uses the default.
 
 	Idempotent — safe to re-run.
 
@@ -24,4 +25,12 @@ BEGIN
 
 	CREATE INDEX IX_user_remember_selector ON user_remember ( selector );
 	CREATE INDEX IX_user_remember_userId   ON user_remember ( userId );
+	CREATE INDEX IX_user_remember_expirationDate ON user_remember ( expirationDate );
 END
+
+-- Outside the create-table block so databases created before 1.3.0 pick it up
+IF NOT EXISTS (
+	SELECT 1 FROM sys.indexes
+	WHERE name = 'IX_user_remember_expirationDate' AND object_id = OBJECT_ID( 'user_remember' )
+)
+	CREATE INDEX IX_user_remember_expirationDate ON user_remember ( expirationDate );
