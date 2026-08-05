@@ -9,7 +9,7 @@ component {
 	this.applicationHelper 	= [ "helpers/Mixins.cfm" ];
 
     function configure() {
-        settings = {
+        variables.settings = {
             userServiceClass = "",
             tokenEncryptKey = "", // Create a key with generateSecretKey("AES", 256).
             tokenEncryptAlgorithm = "aes",
@@ -24,7 +24,7 @@ component {
         };
 
         // Register the event announced after the service recalls a user.
-        interceptorSettings = {
+        variables.interceptorSettings = {
             customInterceptionPoints = [
                 "onRecall"
             ]

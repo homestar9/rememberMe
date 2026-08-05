@@ -114,11 +114,13 @@ Neither restarts the virtual app — see trap 6, which is the single most expens
 ### Traps that will cost you an afternoon
 
 1. **TestBox does not call a component-level `beforeEach()` on a BDD bundle.** Only the closures registered *inside* a `describe()` fire. Declaring `function beforeEach()` on a base class looks right and silently does nothing. Every BDD bundle must register them itself:
-   ```cfc
-   describe( "...", function() {
-       beforeEach( function( currentSpec ) { resetState(); } );
-       afterEach(  function( currentSpec ) { resetState(); } );
-   ```
+
+```cfc
+describe( "...", function() {
+    beforeEach( function( currentSpec ) { resetState(); } );
+    afterEach(  function( currentSpec ) { resetState(); } );
+```
+
    (`beforeAll()` / `afterAll()` *are* bundle lifecycle methods and do fire.)
 2. **Every spec in a `?directory=` run shares one HTTP request, therefore one `cookie` scope.** A cookie set by `rememberMe()` in one spec is visible to the next spec's `cookieExists()`. That is what `resetState()` is for. Symptom if you forget: specs pass alone and fail in a suite.
 3. **`this.name` must not contain spaces.** The service derives its cookie name as `"rememberMe-" & application.applicationName`, and HTTP cookie names must be RFC 6265 tokens. Hence `rememberMe-harness` / `rememberMe-tests`.
@@ -142,6 +144,7 @@ Defined in `test-harness/config/Datasource.cfm`, included from the pseudo-constr
 It is deliberately **not** in `.cfconfig.json`: the MSSQL JDBC driver class differs per engine (Adobe ships DataDirect's `macromedia.jdbc.MacromediaDriver`; Lucee ships Microsoft's `com.microsoft.sqlserver.jdbc.SQLServerDriver`; BoxLang wants its own `bx-mssql` module), and a single `.cfconfig.json` is shared by all four `server-*.json` files. Defining it on the application lets one file serve every engine. `.cfconfig.json` keeps engine settings only.
 
 Engine prerequisites, already wired into the `server-*.json` files:
+
 - **Adobe 2023** — `cfpm install sqlserver` (in `onServerInstall`).
 - **BoxLang** — `bx-mssql` (in `onServerInitialInstall`).
 
