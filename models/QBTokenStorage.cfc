@@ -1,19 +1,30 @@
 /**
  * QBTokenStorage
  *
- * The default token storage provider: raw qb against the table named by the `table` setting,
- * on the datasource named by the `datasource` setting ("" = the application default from the
- * host app's Application.cfc). Satisfies interfaces/ITokenStorage.cfc and is the reference
- * implementation for anyone writing a custom provider.
+ * An OPT-IN token storage provider: raw qb against the table named by the `table` setting, on the
+ * datasource named by the `datasource` setting ("" = the application default from the host app's
+ * Application.cfc). Satisfies interfaces/ITokenStorage.cfc.
+ *
+ * This is not the default and rememberMe does NOT install qb. Up to 1.4.0 it declared
+ * `this.dependencies = [ "qb" ]` and shipped qb inside its own modules/ folder, which ColdBox then
+ * registered as a real application-wide module — so installing rememberMe forced a qb version onto
+ * the host app. 2.0.0 stopped doing that. The default is now models/SQLTokenStorage.cfc, which
+ * needs nothing. To use this one instead:
+ *
+ *     box install qb
+ *
+ * and set `moduleSettings.rememberMe.tokenStorageClass = "QBTokenStorage@rememberMe"`.
  *
  * It receives only plain values from the service (see the interface) and re-annotates them with
  * cfsqltype for the actual queries — that detail must not leak back across the interface.
+ *
+ * SQLTokenStorage is behaviourally identical to this file. Anything you change here, check there.
  */
 component
-    hint="I am the default qb-backed token storage for the rememberMe module"
+    hint="I am the opt-in qb-backed token storage for the rememberMe module. Requires qb, which the module does not install."
 {
 
-    property name="qb" inject="provider:QueryBuilder@qb";
+    property name="wirebox" inject="wirebox";
     property name="settings" inject="coldbox:modulesettings:rememberMe";
 
 
@@ -24,7 +35,8 @@ component
      * @token { userId, selector, hashedValidator, ipAddress, userAgent, createdDate, modifiedDate, expirationDate }
      */
     void function create( required struct token ) {
-        qb.from( getTable() )
+        getQB()
+            .from( getTable() )
             .insert(
                 values = {
                     userId: arguments.token.userId,
@@ -49,7 +61,7 @@ component
      * @selector
      */
     struct function getBySelector( required string selector ) {
-        return qb
+        return getQB()
             .select()
             .from( getTable() )
             .where( "selector", "=", {
@@ -69,7 +81,8 @@ component
      * @audit { ipAddress, userAgent, lastUsedDate, modifiedDate }
      */
     void function updateUsage( required string selector, required struct audit ) {
-        qb.from( getTable() )
+        getQB()
+            .from( getTable() )
             .where( "selector", "=", { value = arguments.selector, cfsqltype = "varchar" } )
             .update(
                 values = {
@@ -92,7 +105,8 @@ component
     void function deleteBySelector( required string selector ) {
         // options is delete()'s THIRD positional parameter ( id, idColumnName, options ) — it must
         // be passed by name here or it would be treated as an id to delete by.
-        qb.from( getTable() )
+        getQB()
+            .from( getTable() )
             .where( "selector", arguments.selector )
             .delete( options = getQueryOptions() );
     }
@@ -104,7 +118,8 @@ component
      * @userId
      */
     void function deleteByUserId( required numeric userId ) {
-        qb.from( getTable() )
+        getQB()
+            .from( getTable() )
             .where( "userId", arguments.userId )
             .delete( options = getQueryOptions() );
     }
@@ -114,7 +129,7 @@ component
      * deleteAll
      */
     void function deleteAll() {
-        qb.from( getTable() ).delete( options = getQueryOptions() );
+        getQB().from( getTable() ).delete( options = getQueryOptions() );
     }
 
 
@@ -128,7 +143,8 @@ component
      */
     numeric function deleteExpiredBefore( required date cutoffDate ) {
 
-        var response = qb.from( getTable() )
+        var response = getQB()
+            .from( getTable() )
             .where( "expirationDate", "<", {
                 value = arguments.cutoffDate,
                 cfsqltype = "timestamp"
@@ -137,6 +153,37 @@ component
 
         // recordCount on a DELETE result is engine-dependent
         return structKeyExists( response.result, "recordCount" ) ? response.result.recordCount : 0;
+    }
+
+
+    /**
+     * getQB
+     * Resolves a QueryBuilder, lazily and memoised — the same shape as
+     * RememberMeService.getUserService() / getTokenStorage().
+     *
+     * Lazily, and NOT as a `property name="qb" inject="provider:QueryBuilder@qb"`, for one specific
+     * reason: rememberMe no longer installs qb, so on most host apps `QueryBuilder@qb` does not
+     * exist. A build-time injection would make this component impossible to construct there, which
+     * in turn would break the WireBox mapping in ModuleConfig.onLoad() and the unit specs that
+     * build it with createMock(). Resolving here means the file is completely inert until someone
+     * actually configures it, and the failure — when it comes — says what to do about it.
+     *
+     * @throws MissingDependency
+     */
+    private any function getQB() {
+        if ( !structKeyExists( variables, "qb" ) ) {
+            try {
+                variables.qb = variables.wirebox.getInstance( "QueryBuilder@qb" );
+            } catch ( any e ) {
+                throw(
+                    type = "MissingDependency",
+                    message = "QBTokenStorage needs qb, which rememberMe does not install as of 2.0.0. Run `box install qb` in your app, or set `moduleSettings.rememberMe.tokenStorageClass` to `SQLTokenStorage@rememberMe` to use the built-in provider, which needs no dependencies.",
+                    detail = "WireBox could not resolve [QueryBuilder@qb]: #e.message#"
+                );
+            }
+        }
+
+        return variables.qb;
     }
 
 

@@ -1,6 +1,6 @@
 /**
  * Unit specs — the token/crypto/parsing core, with every collaborator swapped out.
- * No database, no qb, no cookies. Runs identically on every engine.
+ * No database, no cookies. Runs identically on every engine.
  */
 component extends="tests.resources.BaseUnitSpec" {
 

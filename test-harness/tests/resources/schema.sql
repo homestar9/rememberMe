@@ -1,7 +1,8 @@
 /*
 	Canonical schema for the rememberMe module (SQL Server).
 	`user_remember` is the DEFAULT table name — configurable since 1.4.0 via the `table` setting,
-	consumed by the default storage (models/QBTokenStorage.cfc). The harness uses the default.
+	consumed by both SQL-backed storage providers (models/SQLTokenStorage.cfc, the default since
+	2.0.0, and the opt-in models/QBTokenStorage.cfc). The harness uses the default.
 
 	Idempotent — safe to re-run.
 

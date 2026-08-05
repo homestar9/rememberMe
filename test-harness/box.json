@@ -5,13 +5,15 @@
     "shortDescription":"ColdBox app whose only job is to load the rememberMe module and run its TestBox suite",
     "private":true,
     "dependencies":{
-        "coldbox":"^7.0.0"
+        "coldbox":"^7.0.0",
+        "qb":"^9.0.0"
     },
     "devDependencies":{
         "testbox":"^5.0.0"
     },
     "installPaths":{
         "coldbox":"coldbox/",
-        "testbox":"testbox/"
+        "testbox":"testbox/",
+        "qb":"modules/qb/"
     }
 }

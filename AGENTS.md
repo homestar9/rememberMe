@@ -8,20 +8,32 @@ RememberMe is a Coldbox Module that provides a "remember me" functionality for u
 
 ## Architecture
 
-The module is small. Seven files carry all of it:
-
-- `ModuleConfig.cfc` — settings (`userServiceClass`, `tokenEncryptKey`, `tokenEncryptAlgorithm`, `validatorHashAlgorithm`, `days`, `autoPurge`, `purgeGraceDays`, `purgeTime`, `tokenStorageClass`, `table`, `datasource`), the custom interception point `onRecall`, `this.dependencies = [ "qb" ]`, and the WireBox mappings for `RememberMeService@rememberMe` and `QBTokenStorage@rememberMe` (both NoScope — `binder.map().to()` with no annotation is a transient, not a singleton).
+- `ModuleConfig.cfc` — settings (`userServiceClass`, `tokenEncryptKey`, `tokenEncryptAlgorithm`, `validatorHashAlgorithm`, `days`, `autoPurge`, `purgeGraceDays`, `purgeTime`, `tokenStorageClass`, `table`, `datasource`), the custom interception point `onRecall`, and the WireBox mappings for `RememberMeService@rememberMe`, `SQLTokenStorage@rememberMe`, `MemoryTokenStorage@rememberMe` and `QBTokenStorage@rememberMe`. All NoScope (`binder.map().to()` with no annotation is a transient, not a singleton) **except MemoryTokenStorage, which is `asSingleton`** — see below. **`this.dependencies` is deliberately absent as of 2.0.0; do not add one.**
 - `models/RememberMeService.cfc` — the domain logic: cookie handling (native `cookie` scope), all crypto, the recall/remember/forget lifecycle. Since 1.4.0 it holds **no persistence** — every read/write goes through the storage provider resolved from `tokenStorageClass` (lazy, memoised per instance in `getTokenStorage()`, mirroring `getUserService()`).
-- `models/QBTokenStorage.cfc` — the default storage provider: raw `qb` against the `table` setting on the `datasource` setting ("" = the application default, passed per-query via qb's `options` struct). No ORM, no cbstorages, no cachebox.
+- `models/SQLTokenStorage.cfc` — **the default storage provider since 2.0.0.** Plain `queryExecute` against the `table` setting on the `datasource` setting ("" = the application default, passed per-query via the options struct). Zero dependencies. See the SQL portability rules below before touching the statements.
+- `models/MemoryTokenStorage.cfc` — an in-memory provider (a struct keyed by selector, every method under a named `lock`). For development, tests, and as the shortest complete implementation to copy when writing a provider. **Mapped `asSingleton` and it must stay that way** — a transient in-memory store would be rebuilt empty on every injection and could never recall anything. ModuleSpec asserts the singleton behaviourally.
+- `models/QBTokenStorage.cfc` — an **opt-in** provider: raw `qb`, behaviourally identical to SQLTokenStorage. The module does not install qb; the host app must `box install qb`. Its qb reference is lazy (`getQB()`, try/catch, throws `MissingDependency` with the fix in the message) rather than a build-time `provider:` injection, so the component still constructs — and its mapping still resolves — on an app with no qb.
 - `config/Scheduler.cfc` — the module scheduler (auto-registered by ColdBox as `cbScheduler@rememberMe`). One task, `rememberMe-purge-expired-tokens`, runs `purgeExpired()` daily at `purgeTime`; `.when()` gates it on `autoPurge` at runtime, so disabling leaves the task registered but inert. See the scheduler gotchas below before touching it.
 - `interfaces/IUserRememberService.cfc` — the one-method contract (`retrieveUserById`) a host app's `userServiceClass` must satisfy.
 - `interfaces/ITokenStorage.cfc` — the seven-method contract (`create`, `getBySelector`, `updateUsage`, `deleteBySelector`, `deleteByUserId`, `deleteAll`, `deleteExpiredBefore`) a custom `tokenStorageClass` must satisfy. Documentation-style, never enforced with `implements=` in the module itself; the harness's `StubTokenStorage` does implement it, proving it satisfiable.
 - `helpers/Mixins.cfm` — the `remember()` application helper.
 
+**Why there is no `this.dependencies` (2.0.0).** ColdBox does not isolate module dependencies. `ModuleService.registerModule()` scans a registered module's own `modules/` and `modules_app/` folders as "inception paths" and registers what it finds as real, application-wide modules. So up to 1.4.0, `this.dependencies = [ "qb" ]` plus `box.json`'s `installPaths: { qb: "modules/qb/" }` meant installing rememberMe forced a qb version into the host app's registry, where it could collide with the app's own. That is the entire reason 2.0.0 exists. **Do not reintroduce a module dependency** — write it in plain CFML, or make it an opt-in provider like QBTokenStorage.
+
 **The storage seam's two invariants** (both spec-guarded; do not trade them away):
 
 - **All crypto stays in the service.** A storage provider only ever sees the selector and the ALREADY-HASHED validator, never the raw validator — so a custom provider cannot recreate the pre-1.2.0 bug.
-- **Plain values only across the interface** (strings, numerics, native dates). The service computes everything, dates included; storage stamps nothing and holds no policy (grace-period math included — `deleteExpiredBefore` receives a cutoff *date*). qb's `cfsqltype` annotations are QBTokenStorage's internal business and must not leak into the contract.
+- **Plain values only across the interface** (strings, numerics, native dates). The service computes everything, dates included; storage stamps nothing and holds no policy (grace-period math included — `deleteExpiredBefore` receives a cutoff *date*). `cfsqltype` annotations are each SQL provider's internal business and must not leak into the contract.
+
+**SQL portability rules in `SQLTokenStorage.cfc`** (all four engines green; do not "clean these up"):
+
+- **Named `:param` bindings**, not positional `?` — the 8-column INSERT would misalign silently when a column is added.
+- **Short `cfsqltype` spellings** (`varchar`, `timestamp`, `integer`), matching QBTokenStorage. Verified on Lucee 5, Lucee 6, Adobe 2023 and BoxLang 1.
+- **No `TOP`/`LIMIT` in `getBySelector`.** qb's `.first()` emitted a SQL-Server-only `TOP (1)`. The selector is a `createUuid()` on an indexed column, so it is a single-row seek anyway — use `returntype: "array"` and take `[ 1 ]`. `TOP` is SQL Server only, `LIMIT` is not SQL Server, and ANSI `FETCH FIRST` needs an `ORDER BY` on SQL Server.
+- **`deleteExpiredBefore` uses the `result` option and reads `recordCount`**, with a `structKeyExists` guard. This is the same mechanism qb used internally. Do **not** replace it with `select count(*)` then `delete`: two statements can disagree if another request inserts between them, and the number is only used for logging.
+- **`getTable()`'s allow-list regex is deliberately backslash-free** (`^[A-Za-z0-9_.]+$`). Inside a character class, a backslash is a literal in Adobe's POSIX engine and an escape in the Java engine Lucee and BoxLang use, so `[\.\[\]]` means different things per engine. Square-bracket quoting is not supported and never was — qb would have double-wrapped `[user_remember]` too.
+- **`getQueryOptions()` returns a fresh struct literal every call**, because `getBySelector` and `deleteExpiredBefore` both add a key to what they get back. A spec guards this.
+- `getTable()`/`getQueryOptions()` are read **per call, not snapshotted in `onDIComplete`** — the unit specs build these components with `createMock()` + `$property()`, which skips the WireBox lifecycle entirely, so a snapshot would silently never happen there.
 
 **The token scheme.** `rememberMe()` generates a `selector` and a `validator` (both UUIDs). The cookie carries `encrypt( selector & "_" & rawValidator )`; the database stores the selector alongside `hash( validator )`. On recall, the cookie's raw validator is hashed and compared to the stored hash. That asymmetry is the point: a stolen database yields hashes an attacker cannot present back. **Do not "simplify" this by storing the same value in both places** — that is precisely the bug that was fixed in 1.2.0, and `test-harness/tests/specs/integration/RecallSpec.cfc` has a spec ("throws InvalidToken for a real selector with a forged validator") that fails loudly if it regresses.
 
@@ -41,9 +53,11 @@ The suite lives in `test-harness/`, a ColdBox app whose only job is to load the 
 First time:
 
 ```
-box install                       # qb -> modules/qb
-cd test-harness && box install    # coldbox + testbox
+box install                       # nothing to install — the module has no dependencies
+cd test-harness && box install    # coldbox + testbox + qb
 ```
+
+**qb is the HARNESS's dependency, not the module's.** It installs to `test-harness/modules/qb` (declared in `test-harness/box.json`) and exists only so `QBTokenStorageSpec` and the QB half of `CustomStorageSpec` have something to run against. Both `test-harness/Application.cfc` and `test-harness/tests/Application.cfc` hand-map `/qb` and `/cbpaginator` from there — keep those declared explicitly, because ColdBox creates them mid-request and a mapping created mid-request is not resolvable for component lookups in that same request, so the first cold request would die. **Never let qb reappear under `<repo>/modules/`**: ColdBox would then register it twice, once by the harness's convention scan and once as an inception child of rememberMe.
 
 Then start an engine and hit the runner:
 
@@ -54,7 +68,7 @@ box run-script start:lucee5       # or start:lucee6 / start:2023 / start:boxlang
 | URL | What it runs |
 |---|---|
 | `http://127.0.0.1:60305/` | Harness home page. Confirms the module registered and `remember()` exists. |
-| `.../tests/runner.cfm?directory=tests.specs.unit` | Unit specs. No DB, no qb, no cookies. |
+| `.../tests/runner.cfm?directory=tests.specs.unit` | Unit specs. No DB, no cookies. |
 | `.../tests/runner.cfm?directory=tests.specs.integration` | Integration specs. Real DB, real cookies. |
 | `.../tests/runner.cfm?directory=tests.specs&recurse=false` | `ModuleSpec` only — the "does it even load" sanity bundle. |
 | `.../tests/runner.cfm?bundles=tests.specs.unit.RememberMeServiceSpec` | One bundle, while iterating. |
@@ -63,16 +77,18 @@ Add `&reporter=text` for plain-text output. **Run the directories separately** �
 
 Stop the engine (`box run-script stop:lucee5`) before starting another; they all bind port **60305**.
 
-### Engine status (last verified 2026-07-11)
+### Engine status (last verified 2026-08-05)
 
 | Engine | ModuleSpec | Unit | Integration |
 |---|---|---|---|
-| Lucee 5.4.8 | 10/10 | 32/32 | **31/31** |
-| Lucee 6.2.7 | 10/10 | 32/32 | **31/31** |
-| Adobe 2023 | 10/10 | 32/32 | **31/31** |
-| BoxLang 1 | 10/10 | 32/32 | **31/31** |
+| Lucee 5.4.8 | 14/14 | 55/55 | **33/33** |
+| Lucee 6.2.7 | 14/14 | 55/55 | **33/33** |
+| Adobe 2023 | 14/14 | 55/55 | **33/33** |
+| BoxLang 1.15 | 14/14 | 55/55 | **33/33** |
 
-All four engines are green as of 1.3.0 (counts grew in 1.4.0: the storage abstraction added `QBTokenStorageSpec` (6 unit), `CustomStorageSpec` (4 integration), storage-delegation unit specs, and ModuleSpec storage assertions; in 1.3.0: `PurgeSpec` added 5 integration specs, ModuleSpec added scheduler/purge-settings assertions). All four engines were first green in 1.2.1. Before that, Adobe failed 4 integration specs and BoxLang errored on 16, because the cookie write in `rememberMe()` assigned a **struct of cookie attributes** to the `cookie` scope — a Lucee-only idiom (BoxLang additionally rejected the integer day-count `expires`). The service's cookie handling is now deliberately shaped around three engine quirks; keep them in mind before "cleaning it up":
+Also verified once, by hand, with `test-harness/modules/qb` moved aside entirely: ModuleSpec 14/14, unit 55/55, integration 32/33 — the single failure being the one spec that deliberately uses qb, which fails with the intended `MissingDependency` message. That is the only way to prove the module runs without qb, because the harness itself installs qb. Worth repeating if you touch `getQB()` or the `onLoad()` mappings.
+
+All four engines are green as of 1.3.0 (counts grew in 2.0.0: `SQLTokenStorageSpec` (10 unit) and `MemoryTokenStorageSpec` (13 unit) were added, ModuleSpec gained the no-dependencies / three-provider / singleton assertions, and CustomStorageSpec gained the second datasource spec and the table-validation spec; in 1.4.0: the storage abstraction added `QBTokenStorageSpec` (6 unit), `CustomStorageSpec` (4 integration), storage-delegation unit specs, and ModuleSpec storage assertions; in 1.3.0: `PurgeSpec` added 5 integration specs, ModuleSpec added scheduler/purge-settings assertions). All four engines were first green in 1.2.1. Before that, Adobe failed 4 integration specs and BoxLang errored on 16, because the cookie write in `rememberMe()` assigned a **struct of cookie attributes** to the `cookie` scope — a Lucee-only idiom (BoxLang additionally rejected the integer day-count `expires`). The service's cookie handling is now deliberately shaped around three engine quirks; keep them in mind before "cleaning it up":
 
 - **The write is a `cfcookie()` call with a DateTime `expires`, built via `attributeCollection`.** The struct is needed because ACF's `cfcookie` refuses `path` without `domain` — at *compile* time, so a literal `path=` attribute in the source breaks ACF even inside dead code. The service adds `path="/"` on non-Adobe engines only; ACF defaults its cookies to `Path=/` anyway, so behaviour matches.
 - **ACF never removes a cookie key from the in-request `cookie` scope.** Every deletion mechanism — `cfcookie( expires="now" )`, `structDelete()`, `cookie.delete()`, plain reassignment — just queues an expiring response cookie, and that queued cookie shows straight back through the scope as a key with an **empty value** (`structDelete` even re-adds it under an UPPERCASE name). There is no way to make `structKeyExists( cookie, name )` go false on ACF once the name has been touched.
@@ -84,9 +100,14 @@ Browser-side deletion is done by `forgetMe()`'s `cfcookie( expires="now", preser
 
 Both base classes extend `coldbox.system.testing.BaseTestCase`. Use its `getInstance()` / `getWireBox()` — do not hardcode component paths, do not `createObject()`.
 
-- **`tests.resources.BaseUnitSpec`** — no DB, no qb, no cookies. `buildService()` returns a service with its private methods exposed (`makePublic`) and its settings pinned via `$property()`. It builds a **fresh instance** per call (`createMock()` on the path taken from the WireBox binder) rather than `getInstance()`: several specs need two services with *different* settings to compare (e.g. "cannot be decrypted with a different key"), and a mock built this way is independent of WireBox entirely. (Note: despite older comments, the mapping is **not** a singleton — `binder.map().to()` with no annotation is NoScope, so every `getInstance()` builds a new transient.)
-- **`tests.resources.BaseIntegrationSpec`** — real DB, real qb, real cookie scope. `variables.service` is the genuine wired service from `getInstance()`. Helpers: `resetState()`, `allTokens()`, `tokenCount()`, `forgeToken( selector, validator )`, `putRememberCookie()`, `recallSpy()`. `variables.TABLE` is re-derived from the module's `table` setting in `beforeAll()` — don't hardcode the table name in specs.
-- Storage-seam specs: `unit/QBTokenStorageSpec` covers the settings derivation (no DB); `integration/CustomStorageSpec` drives the full lifecycle through the in-memory `test-harness/models/StubTokenStorage.cfc`. When a spec needs a custom provider, override `tokenStorageClass` on a `prepareMock()`ed service instance **inside the spec** — never in `test-harness/config/Coldbox.cfc`, which would silently swap the storage under every other integration bundle.
+- **`tests.resources.BaseUnitSpec`** — no DB, no cookies. `buildService()` returns a service with its private methods exposed (`makePublic`) and its settings pinned via `$property()`. It builds a **fresh instance** per call (`createMock()` on the path taken from the WireBox binder) rather than `getInstance()`: several specs need two services with *different* settings to compare (e.g. "cannot be decrypted with a different key"), and a mock built this way is independent of WireBox entirely. (Note: despite older comments, the mapping is **not** a singleton — `binder.map().to()` with no annotation is NoScope, so every `getInstance()` builds a new transient.)
+- **`tests.resources.BaseIntegrationSpec`** — real DB, real cookie scope. `variables.service` is the genuine wired service from `getInstance()`. Helpers: `resetState()`, `allTokens()`, `tokenCount()`, `forgeToken( selector, validator )`, `putRememberCookie()`, `recallSpy()`. `variables.TABLE` is re-derived from the module's `table` setting in `beforeAll()` — don't hardcode the table name in specs.
+- Storage-seam specs, and which one to reach for:
+  - `unit/SQLTokenStorageSpec` and `unit/QBTokenStorageSpec` — settings derivation only, no DB. Both build the component with `createMock()` on the path from the WireBox binder.
+  - `unit/MemoryTokenStorageSpec` — the whole seven-method contract, driven directly. It is the only provider whose contract can be fully covered without a database, and it is deliberately written against the contract rather than the struct inside, so anyone building a provider can lift the bundle and repoint `buildStorage()`. It uses `createMock()` rather than `getInstance()` on purpose: the real mapping is `asSingleton`, so `getInstance()` would leak state between specs.
+  - `integration/RecallSpec` and `integration/PurgeSpec` — the real end-to-end coverage for `SQLTokenStorage`, since the wired service resolves it by default. They read rows back with raw `queryExecute` rather than through the provider, so they would catch a provider that wrote the wrong thing.
+  - `integration/CustomStorageSpec` — the seam itself, driven through `test-harness/models/StubTokenStorage.cfc`. That stub stays even though the module now ships `MemoryTokenStorage`, because it lives OUTSIDE the module and is the only proof a host app's own class can satisfy the contract.
+- When a spec needs a custom provider, override `tokenStorageClass` on a `prepareMock()`ed service instance **inside the spec** — never in `test-harness/config/Coldbox.cfc`, which would silently swap the storage under every other integration bundle. For the same reason, the harness config deliberately does not override `tokenStorageClass`, `table`, `datasource` or the purge settings: ModuleSpec asserts those as the module's own defaults.
 
 Neither restarts the virtual app — see trap 6, which is the single most expensive thing to rediscover in this harness. Per-spec isolation comes from `resetState()`, whose first act is `setup()` (BaseTestCase's per-spec request reset — without it ColdBox treats every spec in a bundle as one request).
 
@@ -124,13 +145,13 @@ Engine prerequisites, already wired into the `server-*.json` files:
 - **Adobe 2023** — `cfpm install sqlserver` (in `onServerInstall`).
 - **BoxLang** — `bx-mssql` (in `onServerInitialInstall`).
 
-qb's grammar is **pinned** to `SqlServerGrammar@qb` in the harness config rather than left to AutoDiscover — cheap and deterministic.
+qb's grammar is **pinned** to `SqlServerGrammar@qb` in the harness config rather than left to AutoDiscover — cheap and deterministic. That `moduleSettings.qb` block configures the harness's own qb, not the module's; the module has had no qb since 2.0.0.
 
 ## Module gotchas worth knowing
 
-- The table name and datasource are configurable since 1.4.0 (`table`, `datasource` settings, consumed by `QBTokenStorage`). The cookie name is still **hardcoded** (`"rememberMe-" & application.applicationName`).
-- **qb's `delete()` takes `( id, idColumnName, options )`** — the options struct is the THIRD positional parameter, so it must be passed as a named argument (`.delete( options = getQueryOptions() )`). Passed positionally it becomes an id filter and the datasource option is silently dropped. The other terminal methods (`insert`, `update`, `first`, `get`) take options second and QBTokenStorage names it everywhere anyway.
-- `user_remember.modifiedDate` is `NOT NULL` with **no default**, so the INSERT (`QBTokenStorage.create()`, values supplied by `rememberMe()`) must supply it. It does (this was a bug fixed in 1.2.0 — the INSERT omitted it, which meant the module could not write a row to its own documented schema). Canonical schema: `test-harness/tests/resources/schema.sql`.
+- The table name and datasource are configurable since 1.4.0 (`table`, `datasource` settings, consumed by `SQLTokenStorage` and `QBTokenStorage`; `MemoryTokenStorage` ignores both). The cookie name is still **hardcoded** (`"rememberMe-" & application.applicationName`).
+- **QBTokenStorage only:** qb's `delete()` takes `( id, idColumnName, options )` — the options struct is the THIRD positional parameter, so it must be passed as a named argument (`.delete( options = getQueryOptions() )`). Passed positionally it becomes an id filter and the datasource option is silently dropped. The other terminal methods (`insert`, `update`, `first`, `get`) take options second and QBTokenStorage names it everywhere anyway.
+- `user_remember.modifiedDate` is `NOT NULL` with **no default**, so the INSERT (in whichever SQL provider is configured; values supplied by `rememberMe()`) must supply it. Both do (this was a bug fixed in 1.2.0 — the INSERT omitted it, which meant the module could not write a row to its own documented schema). `lastUsedDate` is the opposite case: the schema's only nullable column, deliberately absent from the INSERT column list, NULL until the first recall. Canonical schema: `test-harness/tests/resources/schema.sql`.
 - `getCookie()` is not null-safe — it throws if the cookie is absent. Gate on `cookieExists()`.
 - `getUserService()` and `getTokenStorage()` memoise into `variables.userService` / `variables.tokenStorage` on first call (per service instance — the mapping is NoScope).
 - The `remember()` helper comes from `this.applicationHelper`. In the harness the module is registered late (`afterAspectsLoad`), after ColdBox's helper-injection pass has already run, so `config/Coldbox.cfc` must re-announce `cbLoadInterceptorHelpers` or `remember()` silently does not exist. This is very likely the same root cause as the README's "Known Issues" note about `remember` being unresolvable on first load.

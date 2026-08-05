@@ -1,5 +1,10 @@
 /**
- * Integration specs — real SQL Server, real qb, real cookie scope.
+ * Integration specs — real SQL Server, real cookie scope.
+ *
+ * These drive the genuinely wired service, so as of 2.0.0 they exercise the module's default
+ * storage provider, models/SQLTokenStorage.cfc, end to end. They are the proof that its plain
+ * queryExecute statements write and read exactly the rows the old qb provider did — every
+ * assertion below reads the database directly rather than going back through the provider.
  * Drives the full rememberMe() -> recallMe() -> forgetMe() lifecycle.
  */
 component extends="tests.resources.BaseIntegrationSpec" {

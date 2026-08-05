@@ -2,9 +2,17 @@
  * ITokenStorage
  *
  * The contract a token storage provider must satisfy. Point the module at your implementation via
- * the `tokenStorageClass` setting (a WireBox DSL string); the default is the qb-backed
- * `QBTokenStorage@rememberMe` (models/QBTokenStorage.cfc), which is also the reference
- * implementation to copy from.
+ * the `tokenStorageClass` setting (a WireBox DSL string).
+ *
+ * The module ships three implementations, and any of them is a fine starting point:
+ *
+ *  - `SQLTokenStorage@rememberMe` (models/SQLTokenStorage.cfc) — the DEFAULT. Plain queryExecute
+ *    against the `table` and `datasource` settings. No dependencies.
+ *  - `MemoryTokenStorage@rememberMe` (models/MemoryTokenStorage.cfc) — a struct in memory. The
+ *    shortest complete implementation, and the easiest one to read when writing your own.
+ *    Development and tests only; tokens do not survive an application restart.
+ *  - `QBTokenStorage@rememberMe` (models/QBTokenStorage.cfc) — opt-in, and needs `box install qb`
+ *    in your own app. The module does not install qb.
  *
  * Like IUserRememberService, this interface is documentation — the module never enforces it with
  * `implements=` (host-app components cannot reliably reference module paths, and interface
@@ -16,7 +24,7 @@
  *    All crypto happens in RememberMeService before storage is involved: an implementation only
  *    ever sees the selector and the ALREADY-HASHED validator, never the raw validator, so a
  *    storage provider cannot weaken the token scheme. Query-level concerns such as cfsqltype
- *    annotations are the implementation's own business (see QBTokenStorage).
+ *    annotations are the implementation's own business (see SQLTokenStorage).
  *
  *  - `selector` arguments are never empty. The service short-circuits empty selectors itself.
  */

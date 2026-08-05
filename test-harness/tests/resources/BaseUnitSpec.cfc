@@ -1,5 +1,5 @@
 /**
- * Base for unit specs — no database, no qb, no cookies.
+ * Base for unit specs — no database, no cookies.
  *
  * Everything here runs against a RememberMeService whose collaborators have been swapped out with
  * $property(), so these specs execute identically on every engine regardless of whether the
@@ -25,7 +25,7 @@ component extends="coldbox.system.testing.BaseTestCase" {
 		tokenEncryptAlgorithm  : "aes",
 		validatorHashAlgorithm : "MD5",
 		days                   : 30,
-		tokenStorageClass      : "QBTokenStorage@rememberMe",
+		tokenStorageClass      : "SQLTokenStorage@rememberMe",
 		table                  : "user_remember",
 		datasource             : ""
 	};
