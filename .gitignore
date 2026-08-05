@@ -5,7 +5,7 @@ WEB-INF
 .vscode/
 .env
 \.idea/
-Thumbs.db
+/*.code-workspace
 
 # logs + tests + temp
 logs/**
