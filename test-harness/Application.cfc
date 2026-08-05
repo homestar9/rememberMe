@@ -24,9 +24,11 @@ component {
 	// See config/Coldbox.cfc afterAspectsLoad(). Requires the repo folder be named "rememberMe".
 	this.mappings[ "/moduleroot" ] = getCanonicalPath( COLDBOX_APP_ROOT_PATH & "../../" );
 
-	// Declared explicitly — see the note in tests/Application.cfc. ColdBox would add these at
-	// runtime, but a mapping created mid-request isn't resolvable in that same request.
-	this.mappings[ "/qb" ]          = getCanonicalPath( this.mappings[ "/rememberMe" ] & "modules/qb" );
+	// qb belongs to the HARNESS, not to the module — rememberMe stopped depending on it in 2.0.0.
+	// It lives in test-harness/modules/qb only so the QBTokenStorage specs have something to run
+	// against. Declared explicitly — see the note in tests/Application.cfc. ColdBox would add these
+	// at runtime, but a mapping created mid-request isn't resolvable in that same request.
+	this.mappings[ "/qb" ]          = getCanonicalPath( COLDBOX_APP_ROOT_PATH & "modules/qb" );
 	this.mappings[ "/cbpaginator" ] = getCanonicalPath( this.mappings[ "/qb" ] & "/modules/cbpaginator" );
 
 	// --- Datasource -----------------------------------------------------------

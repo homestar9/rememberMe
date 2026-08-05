@@ -1,6 +1,6 @@
 /**
  * Integration specs for purgeExpired() and the scheduled purge task.
- * Real SQL Server, real qb — rows are aged via direct SQL the same way RecallSpec
+ * Real SQL Server — rows are aged via direct SQL the same way RecallSpec
  * ages its expired-token fixture.
  */
 component extends="tests.resources.BaseIntegrationSpec" {

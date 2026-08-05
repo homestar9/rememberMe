@@ -1,5 +1,9 @@
 /**
- * An in-memory token storage provider — no qb, no database, just a struct keyed by selector.
+ * An in-memory token storage provider — no database, just a struct keyed by selector.
+ *
+ * Kept even though the module now ships its own models/MemoryTokenStorage.cfc, because this one
+ * lives OUTSIDE the module. It is the only thing in the suite proving a host app's own class can
+ * satisfy the contract, which is exactly what the README promises.
  *
  * `implements` is deliberate, exactly like MockUserService: it makes the harness prove that the
  * contract the module ships (interfaces/ITokenStorage.cfc) is actually satisfiable by a host app.

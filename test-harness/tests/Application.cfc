@@ -24,15 +24,18 @@ component {
 	this.mappings[ "/moduleroot" ] = getCanonicalPath( this.mappings[ "/tests" ] & "../../../" );
 
 	// qb and its own dependency, declared explicitly rather than left to ColdBox.
+	// qb belongs to the HARNESS, not to the module — rememberMe stopped depending on it in 2.0.0,
+	// so it installs into test-harness/modules/qb and exists only so the QBTokenStorage specs have
+	// something to run against.
 	// ColdBox registers these as runtime application mappings while it loads — but a mapping
 	// created mid-request is not yet resolvable for component lookups in that SAME request, so the
 	// FIRST request into a cold tests app would die with "can't find component
 	// [qb.models.Query.QueryBuilder]" and every request after it would pass. Declaring them here
 	// means they exist before any request runs.
 	// getCanonicalPath, not string concat: the paths above already end in a separator, so naive
-	// concatenation yields mixed separators ("...\rememberMe\modules/qb"). Lucee tolerates that;
+	// concatenation yields mixed separators ("...\test-harness\modules/qb"). Lucee tolerates that;
 	// Adobe does not, and you get "Could not find the ColdFusion component qb.models.Query.QueryBuilder".
-	this.mappings[ "/qb" ]          = getCanonicalPath( this.mappings[ "/rememberMe" ] & "modules/qb" );
+	this.mappings[ "/qb" ]          = getCanonicalPath( this.mappings[ "/root" ] & "modules/qb" );
 	this.mappings[ "/cbpaginator" ] = getCanonicalPath( this.mappings[ "/qb" ] & "/modules/cbpaginator" );
 
 	// --- Datasource (shared with the harness app) ------------------------------

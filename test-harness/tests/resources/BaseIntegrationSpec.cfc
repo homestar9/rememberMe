@@ -1,5 +1,5 @@
 /**
- * Base for integration specs — real SQL Server, real qb, real cookie scope.
+ * Base for integration specs — real SQL Server, real cookie scope.
  *
  * Two isolation traps this class exists to handle:
  *
@@ -8,8 +8,8 @@
  *     cookieExists(). Without resetState(), specs pass alone and fail in a suite.
  *
  *  2. The table is shared state. We DELETE around every spec rather than wrapping in a
- *     transaction: qb manages its own connections and the harness owns the database outright, so
- *     a plain delete is simpler and harder to get subtly wrong.
+ *     transaction: the harness owns the database outright, so a plain delete is simpler and harder
+ *     to get subtly wrong.
  *
  * IMPORTANT — how to actually get resetState() to run:
  *

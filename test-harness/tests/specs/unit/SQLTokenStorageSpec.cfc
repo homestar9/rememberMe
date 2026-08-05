@@ -1,18 +1,17 @@
 /**
- * Unit specs for the OPT-IN qb-backed storage — settings-derivation only.
- * No database, no qb: getTable()/getQueryOptions() are pure functions of the settings struct,
- * which is exactly why they exist (the datasource option must not be built at wiring time).
+ * Unit specs for the DEFAULT storage provider — settings derivation only.
+ * No database: getTable()/getQueryOptions() are pure functions of the settings struct, which is
+ * exactly why they exist (the datasource option must not be built at wiring time).
  *
- * This provider stopped being the default in 2.0.0 — see SQLTokenStorageSpec for that one. qb is
- * installed by test-harness/box.json, not by the module, which is why this bundle can still run.
- * Note createMock() works here even without qb resolved: QBTokenStorage looks the QueryBuilder up
- * lazily in getQB() rather than injecting it at build time.
+ * The end-to-end proof that SQLTokenStorage reads and writes real rows lives in the integration
+ * bundles. RecallSpec and PurgeSpec drive the wired service, and the wired service resolves this
+ * provider by default, so they exercise every statement in the file against a real database.
  */
 component extends="tests.resources.BaseUnitSpec" {
 
 	function run() {
 
-		describe( "QBTokenStorage settings derivation", function() {
+		describe( "SQLTokenStorage settings derivation", function() {
 
 			beforeEach( function( currentSpec ) {
 				variables.storage = buildStorage();
@@ -27,6 +26,30 @@ component extends="tests.resources.BaseUnitSpec" {
 				it( "honours a custom table setting", function() {
 					var custom = buildStorage( { table : "my_tokens", datasource : "" } );
 					expect( custom.getTable() ).toBe( "my_tokens" );
+				} );
+
+				it( "allows a schema-qualified name", function() {
+					var custom = buildStorage( { table : "dbo.user_remember", datasource : "" } );
+					expect( custom.getTable() ).toBe( "dbo.user_remember" );
+				} );
+
+				it( "rejects a table name containing SQL punctuation", function() {
+					// The table name is interpolated into the SQL string — an identifier cannot be a
+					// bind parameter — so this allow-list is what qb's grammar wrapValue() used to
+					// provide. It is not a user-input path, but it turns a typo into a clear error
+					// instead of a baffling SQL syntax failure.
+					var custom = buildStorage( { table : "user_remember; drop table users--", datasource : "" } );
+					expect( function() {
+						custom.getTable();
+					} ).toThrow( type = "InvalidConfiguration" );
+				} );
+
+				it( "rejects square-bracket quoting, which was never supported", function() {
+					// qb would have double-wrapped "[user_remember]" too.
+					var custom = buildStorage( { table : "[user_remember]", datasource : "" } );
+					expect( function() {
+						custom.getTable();
+					} ).toThrow( type = "InvalidConfiguration" );
 				} );
 
 			} );
@@ -53,6 +76,18 @@ component extends="tests.resources.BaseUnitSpec" {
 					expect( lazy.getQueryOptions() ).toBe( { datasource : "lateDS" } );
 				} );
 
+				it( "returns a FRESH struct each call, so callers can add returntype/result to it", function() {
+					// getBySelector() and deleteExpiredBefore() both mutate what they get back. If
+					// this ever started returning a shared reference, those keys would accumulate
+					// on every other call's options.
+					var custom = buildStorage( { table : "user_remember", datasource : "myDS" } );
+
+					var first        = custom.getQueryOptions();
+					first.returntype = "array";
+
+					expect( custom.getQueryOptions() ).toBe( { datasource : "myDS" } );
+				} );
+
 			} );
 
 			it( "two instances with different settings are independent", function() {
@@ -70,14 +105,14 @@ component extends="tests.resources.BaseUnitSpec" {
 	}
 
 	/**
-	 * A QBTokenStorage with pinned settings and its private helpers exposed. Same pattern as
+	 * An SQLTokenStorage with pinned settings and its private helpers exposed. Same pattern as
 	 * BaseUnitSpec.buildService(): path from the WireBox binder, createMock() for independence,
 	 * $property() to skip wiring.
 	 */
 	private function buildStorage( struct settings = { table : "user_remember", datasource : "" } ) {
 		var storagePath = getWireBox()
 			.getBinder()
-			.getMapping( "QBTokenStorage@rememberMe" )
+			.getMapping( "SQLTokenStorage@rememberMe" )
 			.getPath();
 
 		var storage = createMock( storagePath );

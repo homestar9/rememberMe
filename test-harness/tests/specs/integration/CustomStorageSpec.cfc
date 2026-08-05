@@ -1,10 +1,15 @@
 /**
  * Integration specs for the storage abstraction itself:
  *
- *  - the full lifecycle running against a CUSTOM (non-qb, in-memory) provider, proving the
- *    tokenStorageClass seam actually works end-to-end — nothing may touch SQL;
- *  - the default QBTokenStorage's datasource option, proving the per-query options plumbing
+ *  - the full lifecycle running against a CUSTOM, in-memory provider that lives OUTSIDE the module
+ *    (test-harness/models/StubTokenStorage.cfc), proving the tokenStorageClass seam works
+ *    end-to-end for a host-app class — nothing may touch SQL;
+ *  - the datasource option on both SQL-backed providers, proving the per-query options plumbing
  *    reaches the engine without touching config/Datasource.cfm.
+ *
+ * StubTokenStorage stays in the harness even though the module now ships its own
+ * MemoryTokenStorage. It is the only thing here proving a class outside the module can satisfy the
+ * contract, which is exactly what the "write your own provider" documentation promises.
  *
  * The tokenStorageClass override happens per spec on a private service instance — NEVER in the
  * harness config, which would silently swap the storage under every other integration bundle.
@@ -95,39 +100,76 @@ component extends="tests.resources.BaseIntegrationSpec" {
 
 			} );
 
-			describe( "QBTokenStorage's datasource option", function() {
+			describe( "the datasource option on the SQL-backed providers", function() {
 
-				it( "reaches the engine when set — a real named datasource works, a bogus one throws", function() {
-					var storagePath = getWireBox()
-						.getBinder()
-						.getMapping( "QBTokenStorage@rememberMe" )
-						.getPath();
+				it( "reaches the engine from SQLTokenStorage — a real named datasource works, a bogus one throws", function() {
+					// SQLTokenStorage is the DEFAULT provider, so this is the plumbing that matters
+					// to almost every host app.
+					expectDatasourceOptionToReachTheEngine( "SQLTokenStorage@rememberMe" );
+				} );
+
+				it( "reaches the engine from QBTokenStorage too", function() {
+					// The opt-in provider. qb is a HARNESS dependency now, not the module's — this
+					// spec is the reason the harness installs it at all.
+					expectDatasourceOptionToReachTheEngine( "QBTokenStorage@rememberMe" );
+				} );
+
+			} );
+
+			describe( "the table setting on the default provider", function() {
+
+				it( "is validated, because a table name cannot be a bind parameter", function() {
+					// qb passed the table name through its grammar's wrapValue(). Raw SQL does not,
+					// so SQLTokenStorage keeps an allow-list in its place.
 					var settings = getInstance( dsl = "coldbox:modulesettings:rememberMe" );
-
-					// The harness's own datasource, but named EXPLICITLY instead of defaulted.
-					var named = prepareMock( getInstance( "QBTokenStorage@rememberMe" ) );
-					named.$property( "settings", "variables", {
-						table      : settings.table,
-						datasource : getApplicationMetadata().datasource
+					var storage  = prepareMock( getInstance( "SQLTokenStorage@rememberMe" ) );
+					storage.$property( "settings", "variables", {
+						table      : "user_remember; drop table user_remember--",
+						datasource : settings.datasource
 					} );
-					expect( named.getBySelector( createUuid() ) ).toBeEmpty();
 
-					// A datasource that does not exist must fail loudly, proving the option is
-					// actually reaching queryExecute and not being silently dropped.
-					var bogus = prepareMock( getInstance( "QBTokenStorage@rememberMe" ) );
-					bogus.$property( "settings", "variables", {
-						table      : settings.table,
-						datasource : "rememberme-no-such-datasource"
-					} );
 					expect( function() {
-						bogus.getBySelector( createUuid() );
-					} ).toThrow();
+						storage.getBySelector( createUuid() );
+					} ).toThrow( type = "InvalidConfiguration" );
+
+					// And the real table is still there.
+					expect( tokenCount() ).toBe( 0 );
+					expect( allTokens() ).toBeArray();
 				} );
 
 			} );
 
 		} );
 
+	}
+
+	/**
+	 * Drives one provider's `datasource` setting both ways: the harness's own datasource named
+	 * EXPLICITLY must work, and a datasource that does not exist must fail loudly. The second half
+	 * is the real assertion — it proves the option is actually reaching queryExecute rather than
+	 * being silently dropped and falling back to the application default.
+	 *
+	 * @storageDSL WireBox DSL of the provider to exercise
+	 */
+	private void function expectDatasourceOptionToReachTheEngine( required string storageDSL ) {
+
+		var settings = getInstance( dsl = "coldbox:modulesettings:rememberMe" );
+
+		var named = prepareMock( getInstance( arguments.storageDSL ) );
+		named.$property( "settings", "variables", {
+			table      : settings.table,
+			datasource : getApplicationMetadata().datasource
+		} );
+		expect( named.getBySelector( createUuid() ) ).toBeEmpty();
+
+		var bogus = prepareMock( getInstance( arguments.storageDSL ) );
+		bogus.$property( "settings", "variables", {
+			table      : settings.table,
+			datasource : "rememberme-no-such-datasource"
+		} );
+		expect( function() {
+			bogus.getBySelector( createUuid() );
+		} ).toThrow();
 	}
 
 }

@@ -1,6 +1,6 @@
 {
     "name":"Remember Me",
-    "version":"1.4.0",
+    "version":"2.0.0",
     "author":"Angry Sam Productions, Inc.",
     "location":"ForgeboxStorage",
     "homepage":"https://github.com/homestar9/rememberMe",
@@ -14,7 +14,7 @@
     "shortDescription":"Remember users between sessions. Works great with cbAuth",
     "description":"A Coldbox module to help remember users between sessions. It works great when used in conjunction with cbAuth or cbSecurity",
     "instructions":"https://github.com/homestar9/rememberMe/README.md",
-    "changelog":"https://github.com/homestar9/rememberMe/changelog.md",
+    "changelog":"https://github.com/homestar9/rememberMe/CHANGELOG.md",
     "type":"modules",
     "keywords":[],
     "private":false,
@@ -26,13 +26,9 @@
         }
     ],
     "contributors":[],
-    "dependencies":{
-        "qb":"^9.0.0"
-    },
+    "dependencies":{},
     "devDependencies":{},
-    "installPaths":{
-        "qb":"modules/qb/"
-    },
+    "installPaths":{},
     "ignore":[],
     "reinitWatchDirectory":"",
     "reinitWatchDelay":500,

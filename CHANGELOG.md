@@ -1,5 +1,30 @@
 # Change Log
 
+## 2.0.0
+
+### Changed
+
+- **The module no longer depends on `qb`.** `ModuleConfig.cfc` dropped `this.dependencies = [ "qb" ]` and `box.json` dropped the dependency and its install path, so `box install rememberMe` now installs exactly one package and adds nothing to the host app's module registry. The reason is that ColdBox does not isolate module dependencies: it registers a module's own `modules/` folder as real, application-wide modules, so the qb that shipped inside rememberMe was forced onto the host app and could collide with the version that app had chosen for itself.
+- **New default storage provider: `SQLTokenStorage@rememberMe`** (`models/SQLTokenStorage.cfc`). Plain `queryExecute` against the same `table` and `datasource` settings, with the same columns and the same behaviour as the qb provider it replaces. The SQL is deliberately dialect-neutral ANSI — no `TOP`/`LIMIT`, no bracket quoting, no vendor functions.
+
+  **Breaking:** the `tokenStorageClass` default changed from `"QBTokenStorage@rememberMe"` to `"SQLTokenStorage@rememberMe"`. If you never set that setting there is nothing to do — the table, the columns, the cookies and the token scheme are all unchanged, and no user gets logged out. If you did set it to `QBTokenStorage@rememberMe`, that provider still ships and still works, but you must now run `box install qb` in your own app. If your app used qb only because rememberMe installed it, add it to your own `box.json` before it disappears on your next `box install`.
+
+- **`QBTokenStorage@rememberMe` is now opt-in and requires the host app to install qb.** The file stays in the module and stays mapped. Its qb injection moved from a build-time `property name="qb" inject="provider:QueryBuilder@qb"` to a lazy `getQB()`, so the component builds fine on an app with no qb and only fails if something actually uses it — with a `MissingDependency` error naming both fixes (`box install qb`, or switch to `SQLTokenStorage`).
+
+### Added
+
+- **New in-memory storage provider: `MemoryTokenStorage@rememberMe`** (`models/MemoryTokenStorage.cfc`), mapped `asSingleton` because a transient in-memory store would be rebuilt empty on every injection. It is for development, for tests, and for trying the module out before creating the token table — tokens are lost on application restart and are not shared across cluster nodes, so it is documented as not for production. It is also the shortest complete implementation of `interfaces/ITokenStorage.cfc`, which makes it the file to copy when writing a custom provider.
+- A "Writing your own token storage" section in the README with a complete copy-paste skeleton of all seven methods, plus a provider comparison table and an "Upgrading from 1.x" section.
+- `SQLTokenStorage` validates the `table` setting against an allow-list and throws `InvalidConfiguration` otherwise. A table name is an identifier and cannot be a bind parameter, so it is interpolated into the SQL; qb used to pass it through its grammar's `wrapValue()` and raw SQL does not, so this restores that layer.
+- New unit bundles `SQLTokenStorageSpec.cfc` (10 specs) and `MemoryTokenStorageSpec.cfc` (13 specs, the full contract driven directly). `ModuleSpec` gained assertions that the module declares no dependencies, that all three providers map, and that `MemoryTokenStorage` really is a singleton. `CustomStorageSpec` now exercises the datasource option on both SQL-backed providers.
+- qb moved to `test-harness/box.json` as a harness dependency, installed into `test-harness/modules/qb`, so the QBTokenStorage specs keep running against the real thing.
+
+### Verified
+
+All four engines green — Lucee 5.4.8, Lucee 6.2.7, Adobe 2023 and BoxLang 1.15 — at 14 ModuleSpec, 55 unit and 33 integration specs. `RecallSpec` and `PurgeSpec` drive the wired service, so they exercise every `SQLTokenStorage` statement against a real SQL Server and assert on the rows directly.
+
+Separately verified by hand with qb removed from the harness entirely: the module boots, all three mappings resolve, and the whole suite passes except the one spec that deliberately uses qb — which fails with the intended `MissingDependency` message.
+
 ## 1.4.0
 
 ### Added

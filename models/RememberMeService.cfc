@@ -310,8 +310,9 @@ component
 	/**
 	 * getTokenStorage
 	 * Get the token storage provider configured by the settings. Defaults to the module's own
-	 * qb-backed QBTokenStorage; see interfaces/ITokenStorage.cfc for the contract a custom
-	 * provider must satisfy.
+	 * SQLTokenStorage, which is plain queryExecute and needs nothing installed. The module also
+	 * ships MemoryTokenStorage (development and tests) and QBTokenStorage (opt-in, needs qb).
+	 * See interfaces/ITokenStorage.cfc for the contract a custom provider must satisfy.
 	 *
 	 * @throws IncompleteConfiguration
 	 */
