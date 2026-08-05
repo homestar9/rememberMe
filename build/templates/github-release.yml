@@ -1,0 +1,78 @@
+##
+## Optional: release from GitHub Actions instead of your own machine.
+##
+## To use it, copy this file to .github/workflows/release.yml in your project.
+## It is kept here so it does not run inside the build kit repository itself.
+##
+## It runs when you push a version tag (v1.2.3), or when you start it by hand from the
+## Actions tab. A tag run publishes that existing tag; a manual branch run lets the release
+## task create the tag. Both paths build the package, run the tests, and publish.
+##
+## Two secrets are needed in your repository settings:
+##   FORGEBOX_API_TOKEN   from https://forgebox.io  (only if you publish to ForgeBox)
+## GITHUB_TOKEN is provided automatically.
+##
+## Note on the build number: this passes the run number from Actions as the build identifier,
+## so packages are stamped 1.2.3+7 rather than with a commit hash. Drop the :buildID line to
+## keep the commit hash instead.
+##
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+        with:
+          # Tags are needed so the release checks can see what is already released.
+          fetch-depth: 0
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "11"
+
+      - name: Install CommandBox
+        uses: Ortus-Solutions/setup-commandbox@v2.0.1
+
+      - name: Install dependencies
+        run: |
+          box install
+
+      - name: Start the test server
+        run: |
+          box server start serverConfigFile=server-lucee@5.json --!console
+          # Wait for the app to answer before running the suite.
+          for i in $(seq 1 60); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:60299/ || true)
+            if [ "$code" -ge 200 ] && [ "$code" -lt 400 ]; then echo "server is up"; break; fi
+            sleep 5
+          done
+
+      - name: Sign in to ForgeBox
+        if: env.FORGEBOX_API_TOKEN != ''
+        env:
+          FORGEBOX_API_TOKEN: ${{ secrets.FORGEBOX_API_TOKEN }}
+        run: box forgebox set-api-token "$FORGEBOX_API_TOKEN"
+
+      - name: Build and release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          box task run taskFile=build/Release.cfc target=run \
+            :version=$(box package show version) \
+            :existingTag=${{ github.ref_type == 'tag' }} \
+            :buildID=${{ github.run_number }}

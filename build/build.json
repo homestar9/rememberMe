@@ -1,0 +1,52 @@
+{
+    "runTests":true,
+    "templateVersion":"1.0.0",
+    "excludes":[
+        "^build$",
+        "^modules$",
+        "^node_modules$",
+        "^resources$",
+        "^test-harness$",
+        "^tests$",
+        "^test-results$",
+        "^temp$",
+        "^plans$",
+        "^(package|package-lock)\\.json$",
+        "^webpack\\.config\\.js$",
+        "^(vite|vitest)\\.config\\.js$",
+        "^docker-compose\\.yml$",
+        "^server(?:-.*)?\\.json$",
+        "^.*\\.code-workspace$",
+        "^(AGENTS|CLAUDE|DEVNOTES|RELEASE)\\.md$",
+        "\\.bak$",
+        "\\.(zip|tar|tar\\.gz|tgz|7z|rar)$",
+        "^\\..*"
+    ],
+    "engines":[
+        {
+            "name":"Adobe 2023",
+            "configFile":"server-adobe@2023.json"
+        },
+        {
+            "name":"Boxlang 1",
+            "configFile":"server-boxlang-cfml@1.json"
+        },
+        {
+            "name":"Lucee 5",
+            "configFile":"server-lucee@5.json"
+        },
+        {
+            "name":"Lucee 6",
+            "configFile":"server-lucee@6.json"
+        }
+    ],
+    "excludesAdd":[],
+    "changelog":"changelog.md",
+    "projectType":"module",
+    "branch":"master",
+    "testRunner":"http://127.0.0.1:60305/tests/runner.cfm",
+    "publish":{
+        "forgebox":true,
+        "github":true
+    }
+}

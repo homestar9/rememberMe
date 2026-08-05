@@ -1,240 +1,174 @@
 /**
- * Build process for ColdBox Modules
- * Adapt to your needs.
+ * Builds and checks the release package.
+ *
+ * Run it with: box run-script build:package
+ *
+ * What it does, in order: run the test suite, copy the source into a staging folder minus
+ * anything excluded, stamp the version, zip it, count the files to prove nothing went missing,
+ * and write checksums. Everything it produces lands in .artifacts/<slug>/<version>/.
+ *
+ * Settings come from build/build.json. You should not need to edit this file.
  */
 component {
 
 	/**
-	 * Constructor
+	 * init
+	 *
+	 * Loads the settings and empties the output folders.
 	 */
 	function init(){
-		// Setup Pathing
-		variables.cwd          = getCWD().reReplace( "\.$", "" );
-		variables.artifactsDir = cwd & "/.artifacts";
-		variables.buildDir     = cwd & "/.tmp";
-		// The embedded server's webroot is test-harness/, and box.json's start:* scripts all use
-		// port 60301. These pointed at 60299 for years and could never have resolved. Use
-		// 127.0.0.1, not localhost: on Windows localhost can resolve to IPv6 ::1 while CommandBox
-		// binds the IPv4 loopback, and the runner preflight then times out (408) against a server
-		// that is actually up.
-		variables.apiDocsURL   = "http://127.0.0.1:60305/apidocs/";
-		variables.testRunner   = "http://127.0.0.1:60305/tests/runner.cfm";
+		variables.config = new BuildConfig( getDirectoryFromPath( getCurrentTemplatePath() ) );
+		variables.s      = variables.config.getSettings();
+		variables.root   = variables.config.getRoot();
 
-		/**
-		 * Source excludes NOT added to the final binary.
-		 *
-		 * These are regex patterns run through reFindNoCase() against each top-level entry name in
-		 * copy() below. reFindNoCase does a PARTIAL match, so an unanchored pattern matches anywhere
-		 * in the name. That is a trap: a bare "modules" would also match "modules_app", which must
-		 * ship (it carries the google submodule). Anchor anything whose name is a
-		 * prefix of something we need to keep.
-		 *
-		 * The leading [\\/]? tolerates a separator in case getCWD() returns no trailing slash; without
-		 * it, an anchored pattern would silently stop matching and start shipping what it excludes.
-		 *
-		 * Only TOP-LEVEL entries are tested (directoryList is called with recurse=false, and a
-		 * directory that survives is copied whole). So a nested file cannot be excluded from here;
-		 * keep generated secrets out of shipped directories in the first place.
-		 *
-		 * Keep shipping: config, handlers, includes, install, interceptors, layouts, lib, models,
-		 * modules_app, udf, views, ModuleConfig.cfc, box.json, README.md
-		 */
-		variables.excludes = [
-			// Build tooling + dependencies (never shipped; CommandBox reinstalls modules/ from box.json)
-			"^[\\/]?build$",
-			"^[\\/]?node_modules$",
-			"^[\\/]?modules$",
-			"^[\\/]?resources$",
-			// Tests + local scratch
-			"^[\\/]?test-harness$",
-			"^[\\/]?tests$",
-			"^[\\/]?test-results$",
-			"^[\\/]?temp$",
-			"^[\\/]?plans$",
-			// Tooling config + dev docs
-			"(package|package-lock)\.json",
-			"webpack.config.js",
-			"vite(st)?\.config\.js",
-			"playwright\.config\.js",
-			"server-.*\.json",
-			"docker-compose.yml",
-			"caffeinecms\.code-workspace",
-			"(AGENTS|CLAUDE|DEVNOTES)\.md",
-			"\.bak$",
-			// Output of install/CreateAdmin.cfc: holds a real password hash, must never ship.
-			"first-admin\.sql",
-			// Every dotfile/dotdir (.git, .env, .npmrc, .artifacts, .tmp, ...)
-			"^[\\/]?\..*"
-		];
+		variables.buildDir     = variables.root & "/" & variables.s.stagingDir;
+		variables.artifactsDir = variables.root & "/" & variables.s.artifactsDir;
 
-		// Cleanup + Init Build Directories
-		[
-			variables.buildDir,
-			variables.artifactsDir
-		].each( function( item ){
+		// Start both folders empty so a build can never include leftovers from the last one.
+		[ variables.buildDir, variables.artifactsDir ].each( function( item ){
 			if ( directoryExists( item ) ) {
 				directoryDelete( item, true );
 			}
-			// Create directories
 			directoryCreate( item, true, true );
 		} );
 
-		// Create Mappings
-		fileSystemUtil.createMapping(
-			"coldbox",
-			variables.cwd & "test-harness/coldbox"
-		);
+		// Point a "coldbox" mapping at the installed framework, which some projects need in
+		// order to load their own code during a build. Skipped when the folder is not there.
+		if ( len( trim( variables.s.coldboxMapping ) ) ) {
+			var coldboxPath = variables.root & "/" & variables.s.coldboxMapping;
+			if ( directoryExists( coldboxPath ) ) {
+				fileSystemUtil.createMapping( "coldbox", coldboxPath );
+			}
+		}
 
 		return this;
 	}
 
 	/**
-	 * Run the build process: test, build source, docs, checksums
+	 * run
 	 *
-	 * @projectName The project name used for resources and slugs
-	 * @version The version you are building
-	 * @buldID The build identifier
-	 * @branch The branch you are building. Empty (the default) resolves the CURRENT git branch at
-	 *         build time so the artifact metadata never lies about what it was cut from.
+	 * Runs the tests, builds the package, and writes checksums.
+	 *
+	 * @projectName The name used for the package folder and zip. Defaults to the box.json slug.
+	 * @version     The version being built. Defaults to the box.json version.
+	 * @buildID     The build identifier. When blank, uses the short git commit hash.
+	 * @branch      The branch being built. When blank, reads the current branch.
+	 * @skipTests   Skip the test suite for this run only. Use only when this version has already
+	 *              been tested. It prints a warning, because an untested build is a real risk.
 	 */
 	function run(
-		required projectName,
-		version = "1.0.0",
-		buildID = createUUID(),
-		branch  = ""
+		string projectName = "",
+		string version     = "",
+		string buildID     = "",
+		string branch      = "",
+		boolean skipTests  = false
 	){
-		// Stamp the artifact with the branch it was actually cut from. Reading live git state (rather
-		// than a hardcoded "development" default) means a build cut from main is labelled main and a
-		// build cut from modernization is labelled modernization — the metadata cannot silently lie.
-		if ( !len( trim( arguments.branch ) ) ) {
-			arguments.branch = getCurrentBranch();
+		fillDefaults( arguments );
+
+		if ( arguments.skipTests || !variables.s.runTests ) {
+			var reason = arguments.skipTests ? "asked for with skipTests" : "turned off in build.json";
+			print
+				.line()
+				.boldYellowLine( "WARNING: the test suite was skipped (#reason#)." )
+				.yellowLine( "This package has not been tested by this build." )
+				.line()
+				.toConsole();
+		} else {
+			ensureTestRunnerReachable();
+			runTests();
 		}
 
-		// Certify before packaging: a release-gate build must never produce an artifact that skipped
-		// its tests. runTests() aborts the build on any failure. We preflight the runner first so an
-		// unreachable server aborts with an ACCURATE message (server down != test regression) instead
-		// of runTests()'s misleading "tests failed". The intentional escape hatch for CI/packaging on
-		// a machine with no running CF engine + seeded database is to invoke target=buildSource
-		// directly (see box.json build:docs for the target= pattern) — an explicit, visible opt-out,
-		// never a silent skip.
-		ensureTestRunnerReachable();
-		runTests();
+		// Map the project so a build can load the project's own components if it needs to.
+		fileSystemUtil.createMapping( arguments.projectName, variables.root );
 
-		// Create project mapping
-		fileSystemUtil.createMapping( arguments.projectName, variables.cwd );
-
-		// Build the source
 		buildSource( argumentCollection = arguments );
-
-		// API docs are deliberately NOT part of the default build. DocBox cannot resolve this
-		// module's component paths (cms.models.*, quick.models.*) without mappings that were never
-		// wired, so docs() dies mid-generation - and no apidocs ship in the module zip anyway. The
-		// docs() target remains callable directly (target=docs) for whoever wires those mappings.
-
-		// checksums
 		buildChecksums();
 
-		// Finalize Message
-		print
-			.line()
-			.boldMagentaLine( "Build Process is done! Enjoy your build!" )
-			.toConsole();
+		print.line().boldMagentaLine( "Build finished. The package is in #variables.exportsDir#" ).toConsole();
 	}
 
 	/**
-	 * Run the test suites
+	 * runTests
+	 *
+	 * Runs the test suite and stops the build when anything fails.
 	 */
 	function runTests(){
-		// Tests First, if they fail then exit
-		print.blueLine( "Testing the package, please wait..." ).toConsole();
+		print.blueLine( "Running the test suite, please wait..." ).toConsole();
 
-		// No outputFile/outputFormats: nothing consumes the JSON/JUnit reports, the exit code below
-		// is what certifies the build, and the outputFile plumbing failed on Windows with a
-		// "volume label syntax is incorrect" IOException from testbox-cli's own FileWrite.
 		command( "testbox run" )
-			.params(
-				runner  = variables.testRunner,
-				verbose = false
-			)
+			.params( runner = variables.s.testRunner, verbose = false )
 			.run();
 
-		// Check Exit Code?
 		if ( shell.getExitCode() ) {
-			return error( "Cannot continue building, tests failed!" );
+			return error( "Stopping: the tests failed. Fix them, or use skipTests to build anyway." );
 		}
 	}
 
 	/**
-	 * Build the source
+	 * buildSource
 	 *
-	 * @projectName The project name used for resources and slugs
-	 * @version The version you are building
-	 * @buldID The build identifier
-	 * @branch The branch you are building. Falls back to the current git branch when invoked directly
-	 *         (e.g. target=buildSource) so a direct packaging run is still labelled honestly.
+	 * Copies the source into the staging folder, stamps the version, zips it, and checks the
+	 * zip holds everything.
+	 *
+	 * @projectName The name used for the package folder and zip.
+	 * @version     The version being built.
+	 * @buildID     The build identifier.
+	 * @branch      The branch being built.
+	 * @skipTests   Accepted so this can be called with the same arguments as run().
 	 */
 	function buildSource(
-		required projectName,
-		version = "1.0.0",
-		buildID = createUUID(),
-		branch  = ""
+		string projectName = "",
+		string version     = "",
+		string buildID     = "",
+		string branch      = "",
+		boolean skipTests  = false
 	){
-		if ( !len( trim( arguments.branch ) ) ) {
-			arguments.branch = getCurrentBranch();
-		}
-		// Build Notice ID
+		fillDefaults( arguments );
+
 		print
 			.line()
 			.boldMagentaLine(
-				"Building #arguments.projectName# v#arguments.version#+#arguments.buildID# from #cwd# using the #arguments.branch# branch."
+				"Building #arguments.projectName# #arguments.version#+#arguments.buildID# from the #arguments.branch# branch."
 			)
 			.toConsole();
 
-		ensureExportDir( argumentCollection = arguments );
+		ensureExportDir( arguments.projectName, arguments.version );
 
-		// Project Build Dir
-		variables.projectBuildDir = variables.buildDir & "/#projectName#";
-		directoryCreate(
-			variables.projectBuildDir,
-			true,
-			true
-		);
+		variables.projectBuildDir = variables.buildDir & "/#arguments.projectName#";
+		directoryCreate( variables.projectBuildDir, true, true );
 
-		// Copy source
-		print.blueLine( "Copying source to build folder..." ).toConsole();
-		copy(
-			variables.cwd,
-			variables.projectBuildDir
-		);
+		print.blueLine( "Copying source into the staging folder..." ).toConsole();
+		copy( variables.root, variables.projectBuildDir );
 
-		// Create build ID
+		// Leave a note naming the commit this package was built from.
 		fileWrite(
-			"#variables.projectBuildDir#/#projectName#-#version#+#buildID#",
-			"Built with love on #dateTimeFormat( now(), "full" )#"
+			"#variables.projectBuildDir#/#arguments.projectName#-#arguments.version#+#arguments.buildID#",
+			"Built from commit #arguments.buildID# on #dateTimeFormat( now(), "full" )#"
 		);
 
-		// Updating Placeholders
-		print.greenLine( "Updating version identifier to #arguments.version#" ).toConsole();
+		// Swap placeholder tokens for the real version and build identifier. A build from the
+		// release branch is stamped with the identifier; anything else is marked a snapshot.
+		print.greenLine( "Stamping version #arguments.version#" ).toConsole();
 		command( "tokenReplace" )
 			.params(
-				path        = "/#variables.projectBuildDir#/**",
+				path        = "#variables.projectBuildDir#/**",
 				token       = "@build.version@",
 				replacement = arguments.version
 			)
 			.run();
 
-		print.greenLine( "Updating build identifier to #arguments.buildID#" ).toConsole();
+		var isReleaseBranch = ( arguments.branch == variables.s.branch );
+		print.greenLine( "Stamping build identifier #arguments.buildID#" ).toConsole();
 		command( "tokenReplace" )
 			.params(
-				path        = "/#variables.projectBuildDir#/**",
-				token       = ( arguments.branch == "master" ? "@build.number@" : "+@build.number@" ),
-				replacement = ( arguments.branch == "master" ? arguments.buildID : "-snapshot" )
+				path        = "#variables.projectBuildDir#/**",
+				token       = ( isReleaseBranch ? "@build.number@" : "+@build.number@" ),
+				replacement = ( isReleaseBranch ? arguments.buildID : "-snapshot" )
 			)
 			.run();
 
-		// zip up source
-		var destination = "#variables.exportsDir#/#projectName#-#version#.zip";
-		print.greenLine( "Zipping code to #destination#" ).toConsole();
+		var destination = "#variables.exportsDir#/#arguments.projectName#-#arguments.version#.zip";
+		print.greenLine( "Zipping to #destination#" ).toConsole();
 		cfzip(
 			action    = "zip",
 			file      = "#destination#",
@@ -243,113 +177,142 @@ component {
 			recurse   = true
 		);
 
-		// Copy box.json for convenience
-		fileCopy(
-			"#variables.projectBuildDir#/box.json",
-			variables.exportsDir
-		);
-	}
+		verifyZip( destination );
 
-	/**
-	 * Produce the API Docs
-	 */
-	function docs(
-		required projectName,
-		version   = "1.0.0",
-		outputDir = ".tmp/apidocs"
-	){
-		ensureExportDir( argumentCollection = arguments );
-
-		// Create project mapping
-		fileSystemUtil.createMapping( arguments.projectName, variables.cwd );
-		// Generate Docs
-		print.greenLine( "Generating API Docs, please wait..." ).toConsole();
-
-		command( "docbox generate" )
-			.params(
-				"source"                = "models",
-				"mapping"               = "models",
-				"strategy-projectTitle" = "#arguments.projectName# v#arguments.version#",
-				"strategy-outputDir"    = arguments.outputDir
-			)
-			.run();
-
-		print.greenLine( "API Docs produced at #arguments.outputDir#" ).toConsole();
-
-		var destination = "#variables.exportsDir#/#projectName#-docs-#version#.zip";
-		print.greenLine( "Zipping apidocs to #destination#" ).toConsole();
-		cfzip(
-			action    = "zip",
-			file      = "#destination#",
-			source    = "#arguments.outputDir#",
-			overwrite = true,
-			recurse   = true
-		);
+		// Put a copy of box.json beside the zip so you can read what shipped without unzipping.
+		fileCopy( "#variables.projectBuildDir#/box.json", variables.exportsDir );
 	}
 
 	/********************************************* PRIVATE HELPERS *********************************************/
 
 	/**
-	 * Resolve the git branch this build is being cut from by reading .git/HEAD directly (no git binary
-	 * dependency, works cross-engine). Returns the branch name, or "modernization" as a sane fallback
-	 * when HEAD is unreadable or detached (e.g. building from an extracted copy with no .git). The
-	 * branch only influences whether tokenReplace stamps a release number ("master") or "-snapshot",
-	 * so an honest fallback beats the old "development" default that could never match reality.
+	 * fillDefaults
+	 *
+	 * Fills in any argument left blank: the slug and version from box.json, the branch and
+	 * commit from git. Doing it here means every entry point behaves the same way.
+	 *
+	 * @args The argument struct, changed in place.
 	 */
-	private function getCurrentBranch(){
-		var headFile = variables.cwd & ".git/HEAD";
-		if ( !fileExists( headFile ) ) {
-			return "modernization";
+	private void function fillDefaults( required struct args ){
+		if ( !len( trim( arguments.args.projectName ?: "" ) ) ) {
+			arguments.args.projectName = variables.config.slug();
 		}
-		var head = trim( fileRead( headFile ) );
-		// A normal checkout: "ref: refs/heads/<branch>" (branch may itself contain slashes).
-		if ( left( head, 16 ) == "ref: refs/heads/" ) {
-			return replace( head, "ref: refs/heads/", "" );
+		if ( !len( trim( arguments.args.version ?: "" ) ) ) {
+			arguments.args.version = variables.config.version();
 		}
-		// Detached HEAD (raw SHA) carries no branch name — fall back rather than stamp a commit hash.
-		return "modernization";
+		if ( !len( trim( arguments.args.branch ?: "" ) ) ) {
+			arguments.args.branch = getCurrentBranch();
+		}
+		if ( !len( trim( arguments.args.buildID ?: "" ) ) ) {
+			arguments.args.buildID = getCurrentCommit();
+		}
 	}
 
 	/**
-	 * Abort the build with an accurate message when the TestBox HTTP runner is unreachable, so a build
-	 * is never certified against a server that is not actually there. Kept separate from runTests() so
-	 * the failure reads "runner unreachable" (start a server) rather than "tests failed" (a regression).
+	 * getCurrentBranch
+	 *
+	 * Reads the current branch from .git/HEAD without needing the git program. Falls back to
+	 * the release branch from build.json when HEAD cannot be read, which happens when building
+	 * from a copy with no .git folder.
+	 */
+	private string function getCurrentBranch(){
+		var headFile = variables.root & "/.git/HEAD";
+		if ( !fileExists( headFile ) ) {
+			return variables.s.branch;
+		}
+		var head = trim( fileRead( headFile ) );
+		if ( left( head, 16 ) == "ref: refs/heads/" ) {
+			return replace( head, "ref: refs/heads/", "" );
+		}
+		// A detached HEAD holds a commit hash, not a branch name.
+		return variables.s.branch;
+	}
+
+	/**
+	 * getCurrentCommit
+	 *
+	 * Reads the short commit hash HEAD points at, straight from the .git folder so the git
+	 * program is not needed and it still works from an extracted copy. Returns "nocommit" when
+	 * there is nothing to read.
+	 */
+	private string function getCurrentCommit(){
+		var headFile = variables.root & "/.git/HEAD";
+		if ( !fileExists( headFile ) ) {
+			return "nocommit";
+		}
+		var head = trim( fileRead( headFile ) );
+		var sha  = "";
+
+		if ( left( head, 5 ) == "ref: " ) {
+			// The usual case: HEAD names a branch, and the hash sits in .git/<ref>, or in
+			// .git/packed-refs once git has tidied it away.
+			var ref     = trim( mid( head, 6, len( head ) ) );
+			var refFile = variables.root & "/.git/" & ref;
+			if ( fileExists( refFile ) ) {
+				sha = trim( fileRead( refFile ) );
+			} else {
+				var packedFile = variables.root & "/.git/packed-refs";
+				if ( fileExists( packedFile ) ) {
+					for ( var rawLine in listToArray( fileRead( packedFile ), chr( 10 ) ) ) {
+						var line = trim( rawLine );
+						// Each line reads "<hash> <ref>". Skip comments and peeled tag lines.
+						if ( len( line ) && left( line, 1 ) != "##" && left( line, 1 ) != "^" && right( line, len( ref ) ) == ref ) {
+							sha = listFirst( line, " " );
+							break;
+						}
+					}
+				}
+			}
+		} else {
+			// A detached HEAD already holds the hash.
+			sha = head;
+		}
+
+		return len( sha ) ? left( sha, 7 ) : "nocommit";
+	}
+
+	/**
+	 * ensureTestRunnerReachable
+	 *
+	 * Stops the build with a clear message when the test server is not answering. Kept separate
+	 * from runTests() so "the server is not running" never reads as "your tests failed".
+	 *
+	 * It asks for the site root rather than the test runner, because asking for the runner
+	 * would start the whole suite.
 	 */
 	private function ensureTestRunnerReachable(){
-		// Probe the harness WEB ROOT, not runner.cfm itself: a bare GET of the runner EXECUTES the
-		// whole test suite, which takes minutes and times this probe out (a 408 against a healthy
-		// server). The root proves the server + app answer; runTests() then does the real run with
-		// its own (long) timeout.
-		var probeUrl   = reReplaceNoCase( variables.testRunner, "/tests/runner\.cfm.*$", "/" );
+		var probeUrl   = variables.config.probeUrl();
 		var httpResult = "";
 		try {
 			cfhttp(
-				url            = probeUrl,
-				method         = "GET",
-				timeout        = 15,
-				throwonerror   = false,
-				redirect       = false,
-				result         = "local.httpResult"
+				url          = probeUrl,
+				method       = "GET",
+				timeout      = 15,
+				throwonerror = false,
+				redirect     = false,
+				result       = "local.httpResult"
 			);
 		} catch ( any e ) {
 			httpResult = { statuscode : "0" };
 		}
-		// 2xx and 3xx both mean "server is up" (the harness root 302s to the admin).
+		// Anything in the 200s or 300s means the site answered.
 		var statusCode = val( httpResult.statuscode ?: "0" );
 		if ( statusCode < 200 || statusCode >= 400 ) {
 			return error(
-				"Test server unreachable at #probeUrl# (status #statusCode#). "
-				& "Start a server first (box run-script start:2023) and retry. "
-				& "To package source WITHOUT running tests, invoke target=buildSource explicitly."
+				"No answer from the test server at #probeUrl# (status #statusCode#). "
+				& "Start a server first, then run this again. "
+				& "To build without running the tests, add :skipTests=true."
 			);
 		}
 	}
 
 	/**
-	 * Build Checksums
+	 * buildChecksums
+	 *
+	 * Writes SHA-512 and MD5 files next to the zip so anyone can confirm a download is intact.
 	 */
 	private function buildChecksums(){
-		print.greenLine( "Building checksums" ).toConsole();
+		print.greenLine( "Writing checksums" ).toConsole();
 		command( "checksum" )
 			.params(
 				path      = "#variables.exportsDir#/*.zip",
@@ -369,58 +332,123 @@ component {
 	}
 
 	/**
-	 * DirectoryCopy is broken in lucee
+	 * verifyZip
+	 *
+	 * Stops the build when the zip holds fewer files than the staging folder.
+	 *
+	 * This is deliberately simple: it counts files rather than working out what went wrong.
+	 * Counting catches any cause, including the one that started it. A published module once
+	 * shipped without several folders because an ignore rule quietly matched them, and nothing
+	 * failed until every app that installed it broke on startup.
+	 *
+	 * @zipPath The full path of the zip just written.
 	 */
-	private function copy( src, target, recurse = true ){
-		// process paths with excludes
+	private function verifyZip( required string zipPath ){
+		cfzip( action = "list", file = arguments.zipPath, name = "local.zipEntries" );
+
+		var stagedCount = directoryList( variables.projectBuildDir, true, "path" )
+			.filter( function( item ){
+				return fileExists( item );
+			} )
+			.len();
+
+		// A zip lists folders as entries too, so only count the files.
+		var zippedCount = 0;
+		for ( var row in local.zipEntries ) {
+			if ( row.type == "file" ) {
+				zippedCount++;
+			}
+		}
+
+		if ( zippedCount != stagedCount ) {
+			return error(
+				"The zip is incomplete: #stagedCount# files were staged but the zip holds #zippedCount#. "
+				& "Check .gitignore and the excludes in build/build.json for a rule matching source files. "
+				& "Staging folder: #variables.projectBuildDir#"
+			);
+		}
+
+		print.greenLine( "Checked: the zip holds all #zippedCount# staged files." ).toConsole();
+	}
+
+	/**
+	 * copy
+	 *
+	 * Copies the project into the staging folder, leaving out anything the excludes match.
+	 * Written by hand because directoryCopy with a filter is unreliable on Lucee.
+	 *
+	 * Only top-level names are tested. A folder that survives is copied whole, so a file
+	 * inside it cannot be excluded from here.
+	 *
+	 * @src    The folder to copy from.
+	 * @target The folder to copy into.
+	 */
+	private function copy( required string src, required string target ){
+		var excludes = variables.config.allExcludes();
+		// Hold this in a plain variable: inside the closures below, "arguments" means the
+		// closure's own arguments, so arguments.target would be missing.
+		var targetDir = arguments.target;
+
 		directoryList(
-			src,
+			arguments.src,
 			false,
 			"path",
 			function( path ){
 				var isExcluded = false;
-				variables.excludes.each( function( item ){
-					if ( path.replaceNoCase( variables.cwd, "", "all" ).reFindNoCase( item ) ) {
+				var name       = relativeName( path );
+				excludes.each( function( pattern ){
+					if ( name.reFindNoCase( pattern ) ) {
 						isExcluded = true;
 					}
 				} );
 				return !isExcluded;
 			}
 		).each( function( item ){
-			// Copy to target
+			var name = relativeName( item );
 			if ( fileExists( item ) ) {
-				print.blueLine( "Copying #item#" ).toConsole();
-				fileCopy( item, target );
+				print.blueLine( "  copy #name#" ).toConsole();
+				fileCopy( item, targetDir );
 			} else {
-				print.greenLine( "Copying directory #item#" ).toConsole();
-				directoryCopy(
-					item,
-					target & "/" & item.replace( src, "" ),
-					true
-				);
+				print.greenLine( "  copy folder #name#" ).toConsole();
+				directoryCopy( item, targetDir & "/" & name, true );
 			}
 		} );
 	}
 
 	/**
-	 * Gets the last Exit code to be used
-	 **/
-	private function getExitCode(){
-		return ( createObject( "java", "java.lang.System" ).getProperty( "cfml.cli.exitCode" ) ?: 0 );
+	 * relativeName
+	 *
+	 * Turns a full path into its name relative to the project root, for example
+	 * "models" or "box.json".
+	 *
+	 * Both sides are put into the same shape first. directoryList returns paths using the
+	 * system separator, so comparing them against a path built with a different separator
+	 * quietly matches nothing and leaves the full path in place.
+	 *
+	 * @path The full path to shorten.
+	 */
+	private string function relativeName( required string path ){
+		var normalisedPath = replace( arguments.path, "\", "/", "all" );
+		var normalisedRoot = replace( variables.root, "\", "/", "all" );
+
+		var name = replaceNoCase( normalisedPath, normalisedRoot, "", "one" );
+		// Drop the separators left at either end.
+		return reReplace( reReplace( name, "^[\\/]+", "" ), "[\\/]+$", "" );
 	}
 
 	/**
-	 * Ensure the export directory exists at artifacts/NAME/VERSION/
+	 * ensureExportDir
+	 *
+	 * Creates .artifacts/<name>/<version>/ and remembers it for the rest of the build.
+	 *
+	 * @projectName The package name.
+	 * @version     The version being built.
 	 */
-	private function ensureExportDir(
-		required projectName,
-		version   = "1.0.0"
-	){
-		if ( structKeyExists( variables, "exportsDir" ) && directoryExists( variables.exportsDir ) ){
+	private function ensureExportDir( required string projectName, required string version ){
+		if ( structKeyExists( variables, "exportsDir" ) && directoryExists( variables.exportsDir ) ) {
 			return;
 		}
-		// Prepare exports directory
-		variables.exportsDir = variables.artifactsDir & "/#projectName#/#arguments.version#";
+		variables.exportsDir = variables.artifactsDir & "/#arguments.projectName#/#arguments.version#";
 		directoryCreate( variables.exportsDir, true, true );
 	}
 }

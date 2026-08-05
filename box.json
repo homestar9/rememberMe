@@ -63,7 +63,20 @@
         "forget:boxlang":"server forget serverConfigFile=server-boxlang-cfml@1.json",
         "forget:lucee5":"server forget serverConfigFile=server-lucee@5.json",
         "forget:lucee6":"server forget serverConfigFile=server-lucee@6.json",
-        "forget:2023":"server forget serverConfigFile=server-adobe@2023.json"
+        "forget:2023":"server forget serverConfigFile=server-adobe@2023.json",
+        "test:engines":"task run taskFile=build/TestEngines.cfc",
+        "bump:alpha":"task run taskFile=build/Bump.cfc :level=preminor :preid=alpha",
+        "release:hotfix":"task run taskFile=build/Release.cfc target=run :version=`package show version` :skipTests=true",
+        "release:existing-tag":"task run taskFile=build/Release.cfc target=run :version=`package show version` :existingTag=true",
+        "release:skip-tests":"task run taskFile=build/Release.cfc target=run :version=`package show version` :skipTests=true",
+        "bump:patch":"task run taskFile=build/Bump.cfc :level=patch",
+        "build:package":"task run taskFile=build/Build.cfc :projectName=`package show slug` :version=`package show version`",
+        "bump:beta":"task run taskFile=build/Bump.cfc :level=preminor :preid=beta",
+        "release:dryrun":"task run taskFile=build/Release.cfc target=run :version=`package show version` :dryRun=true",
+        "release:check":"task run taskFile=build/Doctor.cfc",
+        "bump:major":"task run taskFile=build/Bump.cfc :level=major",
+        "bump:prerelease":"task run taskFile=build/Bump.cfc :level=prerelease",
+        "bump:minor":"task run taskFile=build/Bump.cfc :level=minor"
     },
     "testbox":{
         "runner":"http://127.0.0.1:60305/tests/runner.cfm"
