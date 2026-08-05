@@ -20,9 +20,7 @@
     },
     "jvm":{
         "heapSize":"1024",
-        "args":[
-            "-Dcoldfusion.runtime.remotemethod.matchArguments=false"
-        ]
+        "javaVersion":"openjdk17_jdk"
     },
     "openBrowser":false,
     "cfconfig":{
