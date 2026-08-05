@@ -1,30 +1,18 @@
 /**
- * MemoryTokenStorage
+ * Stores remember-me tokens in the application's memory.
  *
- * A token storage provider that keeps every token in a struct in memory. It satisfies
- * interfaces/ITokenStorage.cfc completely, in about forty lines, with no database and no
- * dependencies — which makes it two useful things at once:
+ * A storage provider saves, loads, updates, and deletes token records for RememberMeService. This
+ * provider follows ITokenStorage.cfc and does not need a database. Use it for local development,
+ * automated tests, or trying the module before the token table exists. This file is also a small
+ * example for developers who want to build a custom storage provider.
  *
- *  1. A working store for development, for automated tests, and for trying the module out before
- *     you have created the token table.
- *  2. The shortest complete example to copy when you write your own provider. Read this file
- *     alongside interfaces/ITokenStorage.cfc, then swap the struct for your ORM, your cache, your
- *     Redis client, or whatever you actually persist to.
+ * Do not use this provider in production. An application restart or a restart of the Java process,
+ * called the JVM, deletes every token. The user must sign in again after the tokens are lost.
+ * Servers also do not share this data. In a group of servers, only the server that created a token
+ * can recall that token.
  *
- * DO NOT USE THIS IN PRODUCTION. Tokens live in one application's memory, so:
- *
- *  - every token is lost when the application restarts or the JVM recycles, and every remembered
- *    user is silently logged out;
- *  - nothing is shared between servers, so in a cluster a user is only remembered on the one node
- *    that issued the cookie.
- *
- * Neither of those is a security hole — a lost token just means the user logs in again — but both
- * make "remember me" look broken. Use SQLTokenStorage@rememberMe (the default) or your own
- * provider for anything real.
- *
- * This is mapped `asSingleton` in ModuleConfig.onLoad(). That is not a style choice: every other
- * mapping in this module is a transient, and a transient in-memory store would be rebuilt empty on
- * every injection, so nothing could ever be recalled.
+ * ModuleConfig maps this provider as a singleton. A singleton is one shared instance. A new
+ * instance would start with an empty struct, so later requests could not recall saved tokens.
  */
 component
     hint="I am an in-memory token storage provider for the rememberMe module. Development and tests only — tokens do not survive an application restart."
@@ -32,18 +20,19 @@ component
 
     variables.tokens = {};
 
-    // Named locks are JVM-wide, so scope this one to the application. Same idiom RememberMeService
-    // uses for its cookie name.
+    // A named lock prevents requests from changing the token struct at the same time. Lock names
+    // are shared across the JVM, so include the application name to keep each application's lock
+    // separate.
     variables._lockName = "rememberMe-MemoryTokenStorage-#application.applicationName#";
 
 
     /**
-     * create
-     * Persists a new token. The service supplies every value, dates included.
+     * Saves a new token in memory.
      *
-     * duplicate() so a caller that hangs on to the struct it passed in cannot mutate what we hold.
+     * Store a copy so later changes to the caller's struct do not change the saved token.
      *
-     * @token { userId, selector, hashedValidator, ipAddress, userAgent, createdDate, modifiedDate, expirationDate }
+     * @token The complete token struct to save. It must contain userId, selector,
+     *        hashedValidator, ipAddress, userAgent, createdDate, modifiedDate, and expirationDate.
      */
     void function create( required struct token ) {
         lock name="#variables._lockName#" type="exclusive" timeout="10" {
@@ -53,14 +42,16 @@ component
 
 
     /**
-     * getBySelector
-     * Returns the token struct for a selector, or an empty struct when there is no match.
+     * Returns the token with the given selector.
      *
-     * @selector
+     * The returned token is a copy. A caller cannot change the saved token by changing the copy.
+     *
+     * @selector The unique value used to find a stored token.
+     * @return A copy of the stored token, or an empty struct when no token matches.
      */
     struct function getBySelector( required string selector ) {
         lock name="#variables._lockName#" type="readonly" timeout="10" {
-            // The contract is an EMPTY STRUCT on no match — never null.
+            // ITokenStorage requires an empty struct when no token matches.
             return structKeyExists( variables.tokens, arguments.selector )
                  ? duplicate( variables.tokens[ arguments.selector ] )
                  : {};
@@ -69,13 +60,14 @@ component
 
 
     /**
-     * updateUsage
-     * Stamps the audit keys on a token that was just recalled, leaving everything else alone.
-     * Silently does nothing if the selector is unknown, which matches what an UPDATE ... WHERE
-     * against a missing row would do.
+     * Updates the audit fields after a successful token recall.
      *
-     * @selector
-     * @audit { ipAddress, userAgent, lastUsedDate, modifiedDate }
+     * Audit fields describe the request that used the token and the time of that use. Other token
+     * fields stay unchanged. An unknown selector does nothing, which matches a database update
+     * that finds no record.
+     *
+     * @selector The unique value used to find the stored token.
+     * @audit A struct containing ipAddress, userAgent, lastUsedDate, and modifiedDate.
      */
     void function updateUsage( required string selector, required struct audit ) {
         lock name="#variables._lockName#" type="exclusive" timeout="10" {
@@ -87,9 +79,9 @@ component
 
 
     /**
-     * deleteBySelector
+     * Deletes the token with the given selector.
      *
-     * @selector
+     * @selector The unique value used to find a stored token.
      */
     void function deleteBySelector( required string selector ) {
         lock name="#variables._lockName#" type="exclusive" timeout="10" {
@@ -99,11 +91,12 @@ component
 
 
     /**
-     * deleteByUserId
-     * Iterate a KEY ARRAY rather than the struct itself — deleting from a struct you are looping
-     * over is undefined behaviour on some engines.
+     * Deletes every token for one user.
      *
-     * @userId
+     * Loop over a separate array of selector keys. Some CFML engines cannot safely delete entries
+     * from a struct while code loops over that same struct.
+     *
+     * @userId The ID of the user whose tokens will be deleted.
      */
     void function deleteByUserId( required numeric userId ) {
         lock name="#variables._lockName#" type="exclusive" timeout="10" {
@@ -117,7 +110,7 @@ component
 
 
     /**
-     * deleteAll
+     * Deletes every token from memory.
      */
     void function deleteAll() {
         lock name="#variables._lockName#" type="exclusive" timeout="10" {
@@ -127,16 +120,13 @@ component
 
 
     /**
-     * deleteExpiredBefore
-     * Deletes tokens whose expirationDate is before the cutoff.
+     * Deletes tokens that expired before the cutoff date.
      *
-     * dateCompare() rather than "<": both values are real date objects here, but "<" on dates falls
-     * back to string comparison on some engines, and a string comparison of two dates is wrong in
-     * ways that only show up at month boundaries.
+     * Use dateCompare() because some CFML engines may treat the less-than operator as a text
+     * comparison for dates. A text comparison does not always put dates in the correct order.
      *
-     * @cutoffDate
-     *
-     * @return The number of tokens deleted
+     * @cutoffDate Delete tokens with an expirationDate before this date.
+     * @return The number of deleted tokens.
      */
     numeric function deleteExpiredBefore( required date cutoffDate ) {
 
@@ -156,9 +146,12 @@ component
 
 
     /**
-     * count
-     * How many tokens are currently held. NOT part of the ITokenStorage contract — a convenience
-     * for tests and for looking at the store while developing. Your own provider does not need it.
+     * Returns the number of tokens currently stored in memory.
+     *
+     * count() is a development and test helper. It is not part of ITokenStorage.cfc, so custom
+     * storage providers do not need to implement it.
+     *
+     * @return The number of stored tokens.
      */
     numeric function count() {
         lock name="#variables._lockName#" type="readonly" timeout="10" {

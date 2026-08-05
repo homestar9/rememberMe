@@ -1,32 +1,29 @@
 component {
 
+    // The module has no required dependencies. SQLTokenStorage uses queryExecute(), which is built
+    // into CFML. QBTokenStorage loads qb only when an application chooses that storage provider.
     this.title = "rememberMe";
-    // Don't map models, we will do it manually
-    // No module dependencies, deliberately. Up to 1.4.0 this declared `[ "qb" ]` and box.json
-    // installed qb into the module's own modules/ folder — which ColdBox then registered as a real
-    // application-wide module, forcing a qb version onto every host app. The default storage
-    // provider (models/SQLTokenStorage.cfc) now uses plain queryExecute so nothing has to be
-    // installed. Do not add a dependency here without a very good reason.
+    // Register each model in onLoad() with an explicit WireBox name.
     this.autoMapModels = false;
-    // Helpers automatically loaded
+    // Load the remember() application helper.
 	this.applicationHelper 	= [ "helpers/Mixins.cfm" ];
 
     function configure() {
         settings = {
             userServiceClass = "",
-            tokenEncryptKey = "", // generateSecretKey("AES", 256);
+            tokenEncryptKey = "", // Create a key with generateSecretKey("AES", 256).
             tokenEncryptAlgorithm = "aes",
             validatorHashAlgorithm = "MD5",
             days = 30,
-            autoPurge = true, // scheduled daily purge of stale rows; set false to opt out
-            purgeGraceDays = 1, // keep rows this many days past expiration; 0 = purge immediately on expiry
-            purgeTime = "04:00", // daily purge run time, 24h server time
-            tokenStorageClass = "SQLTokenStorage@rememberMe", // WireBox DSL of the token storage provider (see interfaces/ITokenStorage.cfc)
-            table = "user_remember", // token table, used by the SQL and qb storage providers
-            datasource = "" // "" = the application default datasource (the host app's Application.cfc)
+            autoPurge = true, // Set this to false to disable the daily removal of old token rows.
+            purgeGraceDays = 1, // Keep an expired row for this many days. Use 0 to remove it after expiration.
+            purgeTime = "04:00", // Run the daily purge at this time in the server's time zone.
+            tokenStorageClass = "SQLTokenStorage@rememberMe", // WireBox name for a provider that follows ITokenStorage.cfc.
+            table = "user_remember", // Table used by the SQL and qb storage providers.
+            datasource = "" // Leave this empty to use the application's default datasource.
         };
 
-        // Custom Events
+        // Register the event announced after the service recalls a user.
         interceptorSettings = {
             customInterceptionPoints = [
                 "onRecall"
@@ -37,18 +34,18 @@ component {
     function onLoad() {
         binder.map( "RememberMeService@rememberMe" ).to( "#moduleMapping#.models.RememberMeService" );
 
-        // The default provider. Plain queryExecute, no dependencies.
+        // Use the dependency-free SQL provider by default.
         binder.map( "SQLTokenStorage@rememberMe" ).to( "#moduleMapping#.models.SQLTokenStorage" );
 
-        // asSingleton, unlike everything else here. An in-memory store rebuilt on every injection
-        // would start empty every time and could never recall anything.
+        // A singleton is one shared instance. MemoryTokenStorage must use a singleton so its saved
+        // tokens are still available when another service asks for the provider.
         binder
             .map( "MemoryTokenStorage@rememberMe" )
             .to( "#moduleMapping#.models.MemoryTokenStorage" )
             .asSingleton();
 
-        // Opt-in, and safe to map even when qb is absent: WireBox mappings are lazy, and
-        // QBTokenStorage resolves qb inside getQB() rather than injecting it at build time.
+        // This optional provider asks WireBox for qb only after an application selects the provider.
+        // The mapping can exist even when qb is not installed.
         binder.map( "QBTokenStorage@rememberMe" ).to( "#moduleMapping#.models.QBTokenStorage" );
     }
 

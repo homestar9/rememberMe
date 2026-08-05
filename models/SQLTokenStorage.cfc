@@ -1,26 +1,20 @@
 /**
- * SQLTokenStorage
+ * Stores remember-me tokens in a database with queryExecute().
  *
- * The default token storage provider: plain `queryExecute` against the table named by the `table`
- * setting, on the datasource named by the `datasource` setting ("" = the application default from
- * the host app's Application.cfc).
+ * A storage provider saves, loads, updates, and deletes token records for RememberMeService. This
+ * is the default provider. The table setting selects the token table. The datasource setting
+ * selects the datasource. An empty datasource setting uses the application's default datasource.
  *
- * ZERO dependencies — no qb, no ORM, no cbstorages — which is the entire point. rememberMe used to
- * declare `this.dependencies = [ "qb" ]`, and because ColdBox registers a module's own `modules/`
- * folder as real application-wide modules, installing rememberMe forced a qb version into the host
- * app. As of 2.0.0 the module installs nothing, and this provider is why it can still persist
- * tokens out of the box.
+ * This provider has no third-party dependencies. queryExecute() is built into CFML.
  *
- * models/QBTokenStorage.cfc remains in the module as an OPT-IN provider for apps already on qb. The
- * two are behaviourally identical and must stay that way — anything you change here, check there.
+ * This provider follows ITokenStorage.cfc. The service passes plain CFML values and an already
+ * hashed validator. This provider adds cfsqltype values when it builds a database query. Each
+ * cfsqltype value tells the database what type of value it will receive.
  *
- * Satisfies interfaces/ITokenStorage.cfc. It receives only plain values from the service (see the
- * interface) and re-annotates them with cfsqltype for the actual queries — that detail must not
- * leak back across the interface.
+ * The SQL avoids database-specific features such as TOP, LIMIT, bracket quoting, and vendor
+ * functions. The project tests SQL Server. The statements also use standard SQL where possible.
  *
- * The SQL is deliberately dialect-neutral ANSI: no TOP/LIMIT, no bracket quoting, no vendor
- * functions. The module documents and tests SQL Server (test-harness/tests/resources/schema.sql),
- * but nothing in here stops these statements running on MySQL, Postgres or Oracle.
+ * Keep this provider's behavior aligned with QBTokenStorage.
  */
 component
     hint="I am the default queryExecute-backed token storage for the rememberMe module"
@@ -30,15 +24,17 @@ component
 
 
     /**
-     * create
-     * Persists a new token row. The service supplies every value, dates included.
+     * Inserts a new token record.
      *
-     * `lastUsedDate` is deliberately ABSENT from the column list — it stays NULL until the token is
-     * first recalled (see updateUsage), and it is the schema's only nullable column. `modifiedDate`
-     * IS present: it is NOT NULL with no default, and omitting it was a real bug fixed in 1.2.0.
-     * `id` is an IDENTITY column and is never supplied.
+     * The service supplies every value, including the dates. lastUsedDate stays null until the
+     * first successful recall. The database creates the id value because id is an identity column.
+     * modifiedDate is required because the table has no default value for that column.
      *
-     * @token { userId, selector, hashedValidator, ipAddress, userAgent, createdDate, modifiedDate, expirationDate }
+     * Named query parameters keep each value matched to its column. This prevents values from
+     * shifting to the wrong columns when the insert changes.
+     *
+     * @token The complete token struct to insert. It must contain userId, selector,
+     *        hashedValidator, ipAddress, userAgent, createdDate, modifiedDate, and expirationDate.
      */
     void function create( required struct token ) {
         queryExecute(
@@ -62,23 +58,22 @@ component
 
 
     /**
-     * getBySelector
-     * Returns the token struct for a selector, or an empty struct when there is no match.
+     * Returns the token record with the given selector.
      *
-     * No TOP/LIMIT on purpose. qb's .first() emitted a grammar-specific "TOP (1)", which would pin
-     * this file to SQL Server for no benefit: the selector is a createUuid() and the column is
-     * indexed, so the match is already a single-row seek. Taking [ 1 ] in CFML costs nothing and
-     * keeps the statement portable — TOP is SQL Server only, LIMIT is not SQL Server, and ANSI
-     * FETCH FIRST needs an ORDER BY on SQL Server.
+     * The query does not use TOP or LIMIT because those clauses do not work across all database
+     * systems. A selector is a unique identifier, also called a UUID. The selector is stored in an
+     * indexed column, so the query should match one record. CFML returns the first record from the
+     * result array.
      *
-     * `select *` rather than a column list, matching qb's .select(): a host app that has added
-     * columns still sees them, so swapping the default provider does not change what callers get.
+     * The query selects every column to match QBTokenStorage. This also returns custom columns that
+     * a host application added to the token table.
      *
-     * @selector
+     * @selector The unique value used to find a stored token.
+     * @return The stored token, or an empty struct when no token matches.
      */
     struct function getBySelector( required string selector ) {
 
-        // getQueryOptions() hands back a fresh literal every call, so adding a key here is safe.
+        // getQueryOptions() returns a new struct, so this change affects only the current query.
         var options        = getQueryOptions();
         options.returntype = "array";
 
@@ -88,17 +83,18 @@ component
             options
         );
 
-        // The contract is an EMPTY STRUCT on no match — never null.
+        // ITokenStorage requires an empty struct when no token matches.
         return arrayLen( rows ) ? rows[ 1 ] : {};
     }
 
 
     /**
-     * updateUsage
-     * Stamps the audit columns on a token that was just recalled.
+     * Updates the audit fields after a successful token recall.
      *
-     * @selector
-     * @audit { ipAddress, userAgent, lastUsedDate, modifiedDate }
+     * Audit fields describe the request that used the token and the time of that use.
+     *
+     * @selector The unique value used to find the stored token.
+     * @audit A struct containing ipAddress, userAgent, lastUsedDate, and modifiedDate.
      */
     void function updateUsage( required string selector, required struct audit ) {
         queryExecute(
@@ -121,9 +117,9 @@ component
 
 
     /**
-     * deleteBySelector
+     * Deletes the token record with the given selector.
      *
-     * @selector
+     * @selector The unique value used to find the stored token.
      */
     void function deleteBySelector( required string selector ) {
         queryExecute(
@@ -135,9 +131,9 @@ component
 
 
     /**
-     * deleteByUserId
+     * Deletes every token record for one user.
      *
-     * @userId
+     * @userId The ID of the user whose tokens will be deleted.
      */
     void function deleteByUserId( required numeric userId ) {
         queryExecute(
@@ -149,9 +145,10 @@ component
 
 
     /**
-     * deleteAll
-     * An empty ARRAY, not an empty struct, for "no bindings" — queryExecute's own documented
-     * default, and the form BaseIntegrationSpec.allTokens() already exercises on all four engines.
+     * Deletes every token record.
+     *
+     * Pass an empty array for the parameter bindings. An empty array is the documented
+     * queryExecute() value for a query with no bindings and works across the supported engines.
      */
     void function deleteAll() {
         queryExecute( "delete from #getTable()#", [], getQueryOptions() );
@@ -159,18 +156,15 @@ component
 
 
     /**
-     * deleteExpiredBefore
-     * Deletes rows whose expirationDate is before the cutoff.
+     * Deletes token records that expired before the cutoff date.
      *
-     * @cutoffDate
-     *
-     * @return The number of rows deleted
+     * @cutoffDate Delete records with an expirationDate before this date.
+     * @return The number of deleted records, or 0 when the engine does not report a count.
      */
     numeric function deleteExpiredBefore( required date cutoffDate ) {
 
-        // Declared BEFORE the call so the read below is safe even on an engine that declines to
-        // populate the struct. The name is scoped ("local.") deliberately — an unscoped name
-        // resolves to the variables scope on some engines, which would leak between calls.
+        // Create the result struct before the query because some engines may not create it. The
+        // local scope also prevents one call from leaving result data for a later call.
         var deleteResult = {};
 
         var options    = getQueryOptions();
@@ -182,36 +176,31 @@ component
             options
         );
 
-        // recordCount on a DELETE result is engine-dependent, and the interface allows 0 when the
-        // backend cannot report a count. This is the same mechanism qb used internally — its
-        // BaseGrammar appends result="local.result" to the options and reads recordCount back off
-        // it — and PurgeSpec asserts the exact number on all four engines, so the guard is
-        // belt-and-braces rather than a known gap.
+        // Some engines do not include recordCount after a DELETE. Return 0 when no count is
+        // available, as allowed by ITokenStorage.
         //
-        // Do NOT "improve" this into a select count(*) followed by a delete: two statements can
-        // disagree if another request inserts a qualifying row between them, and this number is
-        // only ever used for logging.
+        // Do not count with one query and delete with another query. Another request could change
+        // the matching rows between those queries and make the count incorrect.
         return structKeyExists( local.deleteResult, "recordCount" ) ? local.deleteResult.recordCount : 0;
     }
 
 
     /**
-     * getTable
-     * The token table name, from settings. Read per call rather than snapshotted in an
-     * onDIComplete: unit specs build this component with createMock() + $property(), which skips
-     * the WireBox lifecycle entirely, so a snapshot would silently never happen there.
+     * Returns a safe token table name from the module settings.
      *
-     * The name is interpolated straight into the SQL — an identifier cannot be a bind parameter.
-     * It comes from a developer-set module setting, not from user input, so this is not an
-     * injection vector in practice; but qb used to pass the name through its grammar's wrapValue()
-     * and raw SQL does not, so the allow-list restores that layer and turns a typo into a clear
-     * error instead of a baffling SQL syntax failure.
+     * Read the setting on every call instead of caching it. This keeps the value current when a
+     * caller replaces the settings after creating the component.
      *
-     * The pattern is deliberately BACKSLASH-FREE. Inside a character class a backslash is a literal
-     * in Adobe's POSIX engine and an escape in the Java engine Lucee and BoxLang use, so a pattern
-     * like [\.\[\]] means different things per engine. Letters, digits, underscores and dots only —
-     * enough for "user_remember" and "dbo.user_remember". SQL Server bracket-quoting is not
-     * supported and never was: qb would have double-wrapped "[user_remember]" too.
+     * A table name is inserted directly into SQL because SQL identifiers cannot use query
+     * parameters. An allow-list accepts only known-safe characters. This allow-list also gives a
+     * clear configuration error. Valid names may contain letters, numbers, underscores, and dots.
+     *
+     * The regular expression has no backslashes because Adobe ColdFusion and the Java-based CFML
+     * engines handle backslashes differently inside a character group. Bracket-quoted table names
+     * are not supported.
+     *
+     * @return The validated table name.
+     * @throws InvalidConfiguration When the table name contains an unsupported character.
      */
     private string function getTable() {
 
@@ -229,13 +218,13 @@ component
 
 
     /**
-     * getQueryOptions
-     * The queryExecute options struct passed to every call. An empty struct means the engine uses
-     * the application default datasource (the host app's Application.cfc), which is exactly the
-     * out-of-the-box behaviour we want.
+     * Returns the queryExecute() options for the configured datasource.
      *
-     * A fresh literal every call, so callers that need an extra key (`returntype`, `result`) can
-     * safely mutate what they get back.
+     * An empty struct tells the engine to use the application's default datasource. The function
+     * returns a new struct on every call. A caller can add options such as returntype or result
+     * without changing the options for another query.
+     *
+     * @return A new query options struct.
      */
     private struct function getQueryOptions() {
         return len( variables.settings.datasource ) ? { datasource: variables.settings.datasource } : {};
