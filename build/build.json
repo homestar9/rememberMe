@@ -28,6 +28,10 @@
             "configFile":"server-adobe@2023.json"
         },
         {
+            "name":"Adobe 2025",
+            "configFile":"server-adobe@2025.json"
+        },
+        {
             "name":"Boxlang 1",
             "configFile":"server-boxlang-cfml@1.json"
         },
