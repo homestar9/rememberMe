@@ -1,6 +1,13 @@
-# Change Log
+# Changelog
 
-## 2.0.0
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+## [2.0.0] - 2026-08-05
 
 ### Changed
 
@@ -11,6 +18,10 @@
 
 - **`QBTokenStorage@rememberMe` is now opt-in and requires the host app to install qb.** The file stays in the module and stays mapped. Its qb injection moved from a build-time `property name="qb" inject="provider:QueryBuilder@qb"` to a lazy `getQB()`, so the component builds fine on an app with no qb and only fails if something actually uses it — with a `MissingDependency` error naming both fixes (`box install qb`, or switch to `SQLTokenStorage`).
 
+All four engines are green — Lucee 5.4.8, Lucee 6.2.7, Adobe 2023 and BoxLang 1.15 — at 14 ModuleSpec, 55 unit and 33 integration specs. `RecallSpec` and `PurgeSpec` drive the wired service, so they exercise every `SQLTokenStorage` statement against a real SQL Server and assert on the rows directly.
+
+Separately verified by hand with qb removed from the harness entirely: the module boots, all three mappings resolve, and the whole suite passes except the one spec that deliberately uses qb — which fails with the intended `MissingDependency` message.
+
 ### Added
 
 - **New in-memory storage provider: `MemoryTokenStorage@rememberMe`** (`models/MemoryTokenStorage.cfc`), mapped `asSingleton` because a transient in-memory store would be rebuilt empty on every injection. It is for development, for tests, and for trying the module out before creating the token table — tokens are lost on application restart and are not shared across cluster nodes, so it is documented as not for production. It is also the shortest complete implementation of `interfaces/ITokenStorage.cfc`, which makes it the file to copy when writing a custom provider.
@@ -19,13 +30,7 @@
 - New unit bundles `SQLTokenStorageSpec.cfc` (10 specs) and `MemoryTokenStorageSpec.cfc` (13 specs, the full contract driven directly). `ModuleSpec` gained assertions that the module declares no dependencies, that all three providers map, and that `MemoryTokenStorage` really is a singleton. `CustomStorageSpec` now exercises the datasource option on both SQL-backed providers.
 - qb moved to `test-harness/box.json` as a harness dependency, installed into `test-harness/modules/qb`, so the QBTokenStorage specs keep running against the real thing.
 
-### Verified
-
-All four engines green — Lucee 5.4.8, Lucee 6.2.7, Adobe 2023 and BoxLang 1.15 — at 14 ModuleSpec, 55 unit and 33 integration specs. `RecallSpec` and `PurgeSpec` drive the wired service, so they exercise every `SQLTokenStorage` statement against a real SQL Server and assert on the rows directly.
-
-Separately verified by hand with qb removed from the harness entirely: the module boots, all three mappings resolve, and the whole suite passes except the one spec that deliberately uses qb — which fails with the intended `MissingDependency` message.
-
-## 1.4.0
+## [1.4.0] - 2026-07-11
 
 ### Added
 
@@ -33,7 +38,7 @@ Separately verified by hand with qb removed from the harness entirely: the modul
 - New module settings: `tokenStorageClass` (default `"QBTokenStorage@rememberMe"`), `table` (default `"user_remember"` — the previously hardcoded table name), and `datasource` (default `""` = the application default from your `Application.cfc`, passed per-query via qb's `options`).
 - New unit bundle `QBTokenStorageSpec.cfc`, new integration bundle `CustomStorageSpec.cfc` (full lifecycle against an in-memory provider, plus datasource-option plumbing), and a harness `StubTokenStorage.cfc` that `implements` the shipped interface to prove it is satisfiable.
 
-## 1.3.0
+## [1.3.0] - 2026-07-11
 
 ### Added
 
@@ -47,7 +52,7 @@ Separately verified by hand with qb removed from the harness entirely: the modul
 
 - **Test harness:** both base spec classes no longer restart the ColdBox virtual app in `beforeAll()`. All bundles in a runner request share one request, and ColdBox 7's WireBox memoises transient dependencies there (`request.cbTransientDICache`) — so restarting mid-request left later bundles' rebuilt transients wired to the previous boot's shut-down services. The visible symptom was `onRecall` announcements that no registered interceptor ever heard, in multi-bundle runs only. Latent until 1.3.0 added a second integration bundle. See AGENTS.md trap 6.
 
-## 1.2.1
+## [1.2.1] - 2026-07-11
 
 ### Fixed
 
@@ -57,7 +62,7 @@ Separately verified by hand with qb removed from the harness entirely: the modul
 - `cookieExists()` now treats an empty cookie value as absent. Adobe CF never removes an expired/deleted cookie's key from the in-request `cookie` scope — it leaves it behind with an empty value — so after `forgetMe()`, `recallMe()` on ACF threw `InvalidToken` where it should throw `MissingCookie`. An empty token is unusable regardless of engine, so "empty means missing" is the honest semantic everywhere.
 - `forgetMe()` uses `structDelete()` instead of the member-function form `cookie.delete()`.
 
-## 1.2.0
+## [1.2.0] - 2026-07-11
 
 ### Security
 
@@ -81,19 +86,38 @@ The net effect was that the validator comparison in `recallMe()` never rejected 
 - A TestBox `test-harness/` with unit and integration suites (46 specs). See `AGENTS.md` for how to run them, and for the per-engine status matrix.
 - `qb` is now declared as a dependency in `box.json`. `ModuleConfig.cfc` has always declared `this.dependencies = [ "qb" ]`, but `box install rememberMe` never actually installed it.
 
-### Known issues (fixed in 1.2.1)
+### Changed
 
-The cookie write in `rememberMe()` assigns a struct of cookie attributes to the `cookie` scope, which is Lucee-specific. The suite is green on Lucee 5 and 6, and fails on Adobe 2023 (4 specs) and BoxLang (16 specs) because of it. See `AGENTS.md` for detail.
+- Known issue, fixed in 1.2.1: the cookie write in `rememberMe()` assigns a struct of cookie attributes to the `cookie` scope, which is Lucee-specific. The suite is green on Lucee 5 and 6, and fails on Adobe 2023 (4 specs) and BoxLang (16 specs) because of it. See `AGENTS.md` for detail.
 
-## 1.1.1
+## [1.1.1] - 2025-07-20
 
-Version bump.
+### Changed
 
-## 1.1.0
+- Version bump.
 
-Added custom interception point, `onRecall`, to interceptor settings in the module configuration. This interceptor fires when the `remember().recall()` method is called, allowing for custom logic to be executed during the recall process (like logging).
+## [1.1.0] - 2025-07-06
 
-## 1.0.0
+### Added
 
-Initial release.
-Changed the method name for retrieving users to match the interface used by cbauth. We will now use `retrieveUserById()` instead of `getUserById()`.
+- Custom interception point, `onRecall`, to interceptor settings in the module configuration. This interceptor fires when the `remember().recall()` method is called, allowing for custom logic to be executed during the recall process (like logging).
+
+## [1.0.0] - 2023-02-25
+
+### Added
+
+- Initial release.
+
+### Changed
+
+- Changed the method name for retrieving users to match the interface used by cbauth. We will now use `retrieveUserById()` instead of `getUserById()`.
+
+[Unreleased]: https://github.com/homestar9/rememberMe/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/homestar9/rememberMe/compare/v1.4.0...v2.0.0
+[1.4.0]: https://github.com/homestar9/rememberMe/compare/1.1.1...v1.4.0
+[1.3.0]: https://github.com/homestar9/rememberMe/commit/b65f94ebbbad214c2f68b59843f3743c0b2ec0b8
+[1.2.1]: https://github.com/homestar9/rememberMe/compare/7da669a...8b7c64f
+[1.2.0]: https://github.com/homestar9/rememberMe/compare/8d9e8d0...7da669a
+[1.1.1]: https://github.com/homestar9/rememberMe/compare/1.1.0...1.1.1
+[1.1.0]: https://github.com/homestar9/rememberMe/compare/v1.0.0...1.1.0
+[1.0.0]: https://github.com/homestar9/rememberMe/releases/tag/v1.0.0
